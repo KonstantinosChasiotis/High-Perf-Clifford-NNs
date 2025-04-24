@@ -10,7 +10,7 @@ This project aims to optimize clifford neural layers, introduced in [1, 2], to m
 
 Starting from the reference Python implementation (provided by the authors in this repo), we focus exclusively on **inference** (no backward passes) and ensure a compatible interface for seamless integration. Three types of layers are targeted:
 
-1. **Geometric CLI₂₀ᵣd Linear Layers** [2]
+1. **Geometric clifford Linear Layers** [2]
 2. **Multi‑Vector Sigmoid Linear Units** (activation nonlinearities) [4]
 3. **Group Normalizations** [5]
 
