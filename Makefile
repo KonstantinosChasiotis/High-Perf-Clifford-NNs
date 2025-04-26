@@ -6,14 +6,14 @@ CFLAGS   := -O3 -fPIC
 LDFLAGS  := -shared
 
 # Library name (shared object)
-SO_NAME  := libcli2ord.so
+SO_NAME  := libclifford_linear.so
 ifeq ($(OS),Windows_NT)
   SO_NAME := cli2ord_linear.dll
 endif
 
 # Paths
 CSRCDIR    := csrc
-LIBDIR     := $(CSRCDIR)
+LIBDIR     := $(CSRCDIR)/build
 LIBPATH    := $(LIBDIR)/$(SO_NAME)
 SRCS       := $(CSRCDIR)/clifford_linear.c
 HDRS       := 

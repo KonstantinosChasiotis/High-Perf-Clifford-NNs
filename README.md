@@ -1,5 +1,13 @@
 # Team #75: High-Performance Clifford Layers in C
 
+## How to run tests
+
+```bash
+make
+pytest tests/test_linear_c_vs_py.py
+```
+
+
 ## Project Overview
 
 This repository provides a high-performance **Clifford Linear** layer implementation, combining a reference‐pure Python PyTorch module with a C‑accelerated backend. The goal is to build optimized C/C++ versions of key geometric algebra layers for efficient inference on x86_64 and ARM CPUs, while maintaining bit‑perfect compatibility with the Python implementation.
@@ -26,7 +34,6 @@ conda activate cliffordlayers
 pip install -e .
 # Build the C extension
 make               # compiles and test the c code
-
 ```
 
 ## References
