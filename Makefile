@@ -3,42 +3,37 @@
 # Compiler and flags
 CC       := gcc
 CFLAGS   := -O3 -fPIC
-LDFLAGS  := -shared
+LDFLAGS  := -shared -llapacke -lopenblas
 
-# Library name (shared object)
-SO_NAME  := libclifford_linear.so
+# Library suffix based on OS
+SO_SUFFIX := .so
 ifeq ($(OS),Windows_NT)
-  SO_NAME := cli2ord_linear.dll
+  SO_SUFFIX := .dll
 endif
 
 # Paths
 CSRCDIR    := csrc
 LIBDIR     := $(CSRCDIR)/build
-LIBPATH    := $(LIBDIR)/$(SO_NAME)
-SRCS       := $(CSRCDIR)/clifford_linear.c
-HDRS       := 
 
-# Pytest command
-PYTEST := pytest --maxfail=1 --disable-warnings -q
+# Find all C source files
+CSRCS      := $(wildcard $(CSRCDIR)/*.c)
+TARGET_LIBS := $(patsubst $(CSRCDIR)/%.c,$(LIBDIR)/lib%$(SO_SUFFIX),$(CSRCS))
 
 .PHONY: all test clean
 
-all: $(LIBPATH)
+# Default target: Build all libraries
+all: $(TARGET_LIBS)
 
-$(LIBPATH): $(SRCS) $(HDRS) | $(LIBDIR)
+$(LIBDIR)/lib%$(SO_SUFFIX): $(CSRCDIR)/%.c | $(LIBDIR)
 	@echo "Building C shared library → $@"
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 $(LIBDIR):
 	mkdir -p $(LIBDIR)
 
-test: all
-	@echo "Running Python tests"
-	$(PYTEST)
-
 clean:
 	@echo "Cleaning up…"
-	rm -f $(LIBPATH)
+	rm -rf $(LIBDIR)
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	rm -rf .pytest_cache
 

@@ -7,6 +7,9 @@ make
 pytest tests/test_linear_c_vs_py.py
 ```
 
+## LAPCKE and BLAS installs used
+- On ubuntu: liblapacke-dev and libopenblas-dev
+
 
 ## Project Overview
 
