@@ -208,7 +208,7 @@ def clifford_group_norm(
         if running_mean is not None:
             running_mean_orig.copy_(running_mean.view(I, B, int(C / num_groups)).mean(1, keepdim=False))
         if running_cov is not None:
-            running_cov_orig.copy_(running_cov.view(I, I, B, int(C / num_groups)).mean(1, keepdim=False))
+            running_cov_orig.copy_(running_cov.view(I, I, B, int(C / num_groups)).mean(2, keepdim=False))
 
         return x_norm.view(B, C, *D, I)
 
