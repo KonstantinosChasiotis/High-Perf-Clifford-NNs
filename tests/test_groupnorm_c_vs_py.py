@@ -10,7 +10,7 @@ from cliffordlayers.nn.functional.groupnorm import (
     clifford_group_norm,
 )
 from cliffordlayers.signature import CliffordSignature
-from cliffordlayers.wrapper_groupnorm   import c_groupnorm_forward
+from cliffordlayers.wrapper_groupnorm   import c_clifford_group_norm
 
 @pytest.mark.parametrize("g", [
     [1.0], [-1.0], [1.0,1.0], [-1.0,-1.0], [1.0,1.0,1.0]
@@ -18,27 +18,62 @@ from cliffordlayers.wrapper_groupnorm   import c_groupnorm_forward
 @pytest.mark.parametrize("B,C,D,num_groups", [
     (2,4,3,2), (1,4,3,2), (7,9,5,3), (16, 40, 9, 8)
 ])
-def test_groupnorm_c_matches_python(g, B, C, D, num_groups):
+@pytest.mark.parametrize("running", [
+    False, True
+])
+@pytest.mark.parametrize("scaling", [
+    False, True
+])
+def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling):
 
+    I = CliffordSignature(g).n_blades
     eps = 1e-5
-    if(CliffordSignature(g).n_blades > 4):
+    if(I > 4):
         eps = 1e-1 #for 3D numerically very unstable with low eps pertubation
 
-    x = torch.randn(B, C, D, CliffordSignature(g).n_blades)
+    x = torch.randn(B, C, D, I)
+
+    rmean_py = None
+    rmean_c = None
+    rcov_py = None
+    rcov_c = None
+    if running:
+        rmean_py = torch.randn(I, int(C / num_groups))
+        rmean_c = rmean_py.clone()
+        rcov_py = torch.randn(I,I, int(C / num_groups))
+        rcov_c = rcov_py.clone()
+
+    weight = None
+    bias = None
+    if scaling:
+        weight = torch.randn(I,I, int(C / num_groups))
+        bias = torch.randn(I, int(C / num_groups))
 
     x_norm = clifford_group_norm(
             x,
-            CliffordSignature(g).n_blades,
+            I,
             num_groups=num_groups,
+            running_mean=rmean_py,
+            running_cov=rcov_py,
+            weight=weight,
+            bias=bias,
             eps=eps,
         )
 
-    x_norm_c = c_groupnorm_forward(
+    x_norm_c = c_clifford_group_norm(
         x,
-        CliffordSignature(g).n_blades,
+        I,
         num_groups=num_groups,
+        running_mean=rmean_c,
+        running_cov=rcov_c,
+        weight=weight,
+        bias=bias,
         eps=eps,
     )
-
+    
     torch.testing.assert_close(x_norm, x_norm_c)
+
+    if running:
+        torch.testing.assert_close(rmean_py, rmean_c)
+        torch.testing.assert_close(rcov_py, rcov_c)
     

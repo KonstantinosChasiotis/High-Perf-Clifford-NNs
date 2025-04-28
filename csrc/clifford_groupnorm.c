@@ -7,27 +7,103 @@ void clifford_groupnorm_forward(
     int D,
     int _I, //cant use I since it is a macro in linpacke....
     int num_groups,
+    bool running,
+    float *running_mean_orig,
+    float *running_cov_orig,
+    bool scaling,
+    const float *weight_orig,
+    const float *bias_orig,
+    bool training,
+    float momentum,
     float eps,
     float *x_norm){
 
-    //reshape
+    //basic constants
     int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
 
-    //mean
-    size_t mean_size = dim0 * _I;
-    float * mean = calloc(mean_size, sizeof(float));
-    for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < num_groups; j++){
-            for(int k = 0; k < D; k++){
-                for(int l = 0; l < _I; l++){
-                    mean[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
+    //blow up running mean and cov along the batch dim
+    float * running_mean;
+    float * running_cov;
+    if ( running ){
+        size_t running_mean_size = _I * dim0;
+        running_mean = calloc(running_mean_size, sizeof(float));
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    running_mean[i*group_size*B + j*B + l] = running_mean_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+        size_t running_cov_size = _I* _I * dim0;
+        running_cov = calloc(running_cov_size, sizeof(float)); //(_I,_I,dim0)
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        running_cov[i*_I*group_size*B + ii*group_size*B + j*B + l] = running_cov_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
                 }
             }
         }
     }
-    for(int i = 0; i < dim0; i++){
-        for(int l = 0; l < _I; l++){
-            mean[i*_I + l] /= (D*num_groups);
+
+    //blow up weight and bias
+    float * weight;
+    float * bias;
+    if ( scaling ){
+        size_t weight_size = _I* _I * dim0;
+        weight = calloc(weight_size, sizeof(float)); // (_I,_I,dim0)
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        weight[i*_I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
+                }
+            }
+        }
+        size_t bias_size = _I * dim0;
+        bias = calloc(bias_size, sizeof(float));
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    bias[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+    }
+
+    //mean
+    size_t mean_size = dim0 * _I;
+    float * mean = calloc(mean_size, sizeof(float));
+    if (training || (!running)) {
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int k = 0; k < D; k++){
+                    for(int l = 0; l < _I; l++){
+                        mean[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
+                    }
+                }
+            }
+        }
+        for(int i = 0; i < dim0; i++){
+            for(int l = 0; l < _I; l++){
+                mean[i*_I + l] /= (D*num_groups);
+            }
+        }
+        if (running){ //update running mean
+            for(int i = 0; i < _I; i++){
+                for(int j = 0; j < dim0; j++){
+                        running_mean[i*dim0 + j] += momentum *(mean[j*_I + i] - running_mean[i*dim0 + j]);
+                }
+            }
+        }
+    } else { //if not training use running mean
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < dim0; j++){
+                    mean[j*_I + i] = running_mean[i*dim0 + j];
+            }
         }
     }
 
@@ -44,7 +120,7 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //permute: dim0, *(num_groups,D), _I -> dim0, _I, (here is empty dim in python) ,num_groups,D
+    //permute: dim0, num_groups, D, _I -> dim0, _I, num_groups, D
     float * X = calloc(x_size, sizeof(float));
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
@@ -56,7 +132,7 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //transpose X (think this is the same as x_centered .... ups nice)
+    //transpose X (think this is the same as x_centered .... ups)
     float * XT = calloc(x_size, sizeof(float));
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < _I; j++){
@@ -66,18 +142,37 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //matmult to get cov
+    //calc cov
     size_t cov_size = dim0*_I*_I;
     float * cov = calloc(cov_size, sizeof(float));
-    for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < _I; j++){ //row selector
-            for(int l = 0; l < _I; l++){ //col selector
-                for(int k = 0; k < num_groups*D; k++){
-                    cov[i*_I*_I + j*_I + l] += X[i*_I*num_groups*D + j*num_groups*D + k]* XT[i*num_groups*D*_I + k*_I + l];
-    }}}}
-    //scale all of cov
-    for(int i = 0; i < cov_size; i++){
-        cov[i] /= (num_groups * D);
+    if (training || (!running)){
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < _I; j++){ //row selector
+                for(int l = 0; l < _I; l++){ //col selector
+                    for(int k = 0; k < num_groups*D; k++){
+                        cov[i*_I*_I + j*_I + l] += X[i*_I*num_groups*D + j*num_groups*D + k]* XT[i*num_groups*D*_I + k*_I + l];
+        }}}}
+        //scale all of cov
+        for(int i = 0; i < cov_size; i++){
+            cov[i] /= (num_groups * D);
+        }
+        if (running) { //upadate running cov
+            for(int i = 0; i < _I; i++){            
+                for(int ii = 0; ii < _I; ii++){
+                    for(int j = 0; j < dim0; j++){
+                        running_cov[i*_I*dim0 + ii*dim0 + j] += momentum *(cov[j*_I*_I + i*_I + ii] - running_cov[i*_I*dim0 + ii*dim0 + j]);
+                    }
+                }
+            }
+        }
+    } else {
+        for(int i = 0; i < _I; i++){ //if not training use running cov
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < dim0; j++){
+                    cov[j*_I*_I + i*_I + ii] = running_cov[i*_I*dim0 + ii*dim0 + j];
+                }
+            }
+        }
     }
 
     //get max for each groups cov matrix
@@ -102,13 +197,12 @@ void clifford_groupnorm_forward(
 
     //cholesky decomp
     float * U = calloc(cov_size, sizeof(float));
-    for(int i = 0; i < cov_size; i++){ // copy since cholseky is inplace
+    for(int i = 0; i < cov_size; i++){ //copy since cholseky is inplace
         U[i] = cov_eye[i];
     }
     int info;
     for(int i = 0; i < dim0; i++){
         info = LAPACKE_spotrf(LAPACK_ROW_MAJOR, 'U', _I, &U[i*_I*_I], _I); //does not mask of lower half....
-        // Check for convergence
         if (info > 0) {printf("The matrix is not positive definite.\n");return;}
         if (info < 0) {printf("Illegal value in argument %d\n", -info);return;}
     }
@@ -116,7 +210,7 @@ void clifford_groupnorm_forward(
 
     //solve triangular
     float * x_norm_here = calloc(x_size, sizeof(float));
-    for(int i = 0; i < x_size; i++){//copy as it will be overwritten by lapacke function
+    for(int i = 0; i < x_size; i++){ //copy as it will be overwritten by blas function
         x_norm_here[i] = x_centered[i];
     }
     for(int i = 0; i < dim0; i++){
@@ -127,11 +221,87 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //copy result over
-    for(int i = 0; i < x_size; i++){
-        x_norm[i] = x_norm_here[i];
+    //write runnning mean and cov back
+    if( running ){
+        //mean
+        for(int i = 0; i < _I*group_size; i++){
+            running_mean_orig[i] = 0;
+        }
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    running_mean_orig[i*group_size + j] += running_mean[i*group_size*B + l*group_size + j];
+                }
+            }
+        }
+        for(int i = 0; i < _I*group_size; i++){
+            running_mean_orig[i] /= B;
+        }
+        //cov
+        for(int i = 0; i < _I*_I*group_size; i++){
+            running_cov_orig[i] = 0;
+        }
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        running_cov_orig[i*_I*group_size + ii*group_size + j] += running_cov[i*_I*group_size*B + ii*group_size*B + l*group_size + j];
+                    }
+                }
+            }
+        }
+        for(int i = 0; i < _I*_I*group_size; i++){
+            running_cov_orig[i] /= B;
+        }
+        free(running_mean);
+        free(running_cov);
     }
 
+    //scaling or just copy over
+    if ( scaling ){
+        //permute weight from (_I0, _I1, dim0) to (dim0, _I0, _I1)
+        //think their code is wrong since they dont permute the bias and just reshape it...
+        size_t weight_size = _I* _I * dim0;
+        float *weight_perm = calloc(weight_size, sizeof(float));
+        for(int i = 0; i < _I*_I; i++){
+            for(int j = 0; j < dim0; j++){
+                weight_perm[j*_I*_I + i] = weight[i*dim0 + j];
+            }
+        }
+
+        //mat mult and add 
+        for(int i = 0; i < x_size; i++){
+            x_norm[i] = 0;
+        }
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *W = weight_perm + i*_I*_I;
+                    float *x = x_norm_here + i*num_groups*D*_I + j*D*_I + l*_I;
+                    float *xn = x_norm + + i*num_groups*D*_I + j*D*_I + l*_I;
+                    float *b = bias + i*_I;
+                    //(I,I)x(I,1)
+                    for(int ii = 0; ii < _I; ii++){
+                        for(int jj = 0; jj < _I; jj++){
+                            xn[ii] += W[ii*_I + jj] * x[jj];
+                        }
+                        xn[ii] += b[ii];
+                    }
+                }
+            }
+        }
+
+        free(weight);
+        free(bias);
+        free(weight_perm);
+    } else {
+        //copy result over without scaling
+        for(int i = 0; i < x_size; i++){
+            x_norm[i] = x_norm_here[i];
+        }
+    }
+    
     //free all the temp arrays
     free(x_norm_here);
     free(U);

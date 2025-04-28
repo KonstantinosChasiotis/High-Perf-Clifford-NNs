@@ -17,6 +17,14 @@ void clifford_groupnorm_forward(
     int D,
     int _I,
     int num_groups,
+    bool running,
+    float *running_mean_orig,
+    float *running_cov_orig,
+    bool scaling,
+    const float *weight_orig,
+    const float *bias_orig,
+    bool training,
+    float momentum,
     float eps,
     float *x_norm);
 
