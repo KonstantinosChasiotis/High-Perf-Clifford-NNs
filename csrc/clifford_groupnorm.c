@@ -1,5 +1,33 @@
 #include "clifford_groupnorm.h"
 
+/*
+Assumption we run in training mode
+
+Base:
+    Adds: 2BCDI + BCDII + dim0*I + dim0(I^3)/6 + BCDI(I-1)/2 = BCDI(2 + I + (I-1)/2) + dim0I(1+II/6)
+    Mults: BCDII + dim0*I + dim0(I^3)/6 + BCDI(I-1)/2 = BCDI(I + (I-1)/2) + dim0I(1+II/6)
+    Divs: dim0*I + dim0*I*I + BCDI = dim0I(1+I) + BCDI
+    Total: BCDI(2 + 2I + I - 1 + 1) + dim0I(2 + II/3 + 1 + I) = BCDI(3I + 2) + dim0I(II/3 + I + 3)
+Running Mean:
+    Adds: 2dim0*I + 2dim0*I*I + I*group_size*B + I*I*group_size*B = 3dim0I(I+1)
+    Mults: dim0*I + dim0*I*I = dim0I(I+1)
+    Divs: I*group_size + I*I*group_size = IIC/num_groups
+Weight and Bias:
+    Adds: BCDII + BCDI = BCDI(1+I)
+    Mults: BCDII
+    Divs:
+
+
+Ideas for Optimization:
+- Less memory allocation
+- Avoid back transposition of X -> XT = x
+- Make sure BLAS/LAPCKE routines are very optimized
+- Note the expensive things often have I dimesntions, the only I dimension we need to support are 2,4,8... use super optimized verions for this?
+- On the back subsititution we could first norm the diagonal since we do backsub many vectors with one mat
+- Generally use vectorization (especially if we have the I dimension)
+*/
+
+
 void clifford_groupnorm_forward(
     const float *x,
     int B,
@@ -28,7 +56,7 @@ void clifford_groupnorm_forward(
     if ( running ){
         size_t running_mean_size = _I * dim0;
         running_mean = calloc(running_mean_size, sizeof(float));
-        for(int i = 0; i < _I; i++){
+        for(int i = 0; i < _I; i++){ //COST: 0 flops
             for(int j = 0; j < group_size; j++){
                 for(int l = 0; l < B; l++){
                     running_mean[i*group_size*B + j*B + l] = running_mean_orig[i*group_size + ((j*B + l)%group_size)];
@@ -81,14 +109,14 @@ void clifford_groupnorm_forward(
         for(int i = 0; i < dim0; i++){
             for(int j = 0; j < num_groups; j++){
                 for(int k = 0; k < D; k++){
-                    for(int l = 0; l < _I; l++){
+                    for(int l = 0; l < _I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
                         mean[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
                     }
                 }
             }
         }
         for(int i = 0; i < dim0; i++){
-            for(int l = 0; l < _I; l++){
+            for(int l = 0; l < _I; l++){ //COST: dim0*I
                 mean[i*_I + l] /= (D*num_groups);
             }
         }
@@ -202,6 +230,7 @@ void clifford_groupnorm_forward(
     }
     int info;
     for(int i = 0; i < dim0; i++){
+        //COST: https://en.wikipedia.org/wiki/Cholesky_decomposition (I^3)/6 adds and mults
         info = LAPACKE_spotrf(LAPACK_ROW_MAJOR, 'U', _I, &U[i*_I*_I], _I); //does not mask of lower half....
         if (info > 0) {printf("The matrix is not positive definite.\n");return;}
         if (info < 0) {printf("Illegal value in argument %d\n", -info);return;}
@@ -215,7 +244,7 @@ void clifford_groupnorm_forward(
     }
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
-            for(int k = 0; k < D; k++){
+            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI divs
                     cblas_strsv(CblasRowMajor, CblasUpper, CblasNoTrans ,CblasNonUnit, _I, &U[i*_I*_I], _I, &x_norm_here[i*num_groups*D*_I + j*D*_I + k*_I], 1);
             }
         }
