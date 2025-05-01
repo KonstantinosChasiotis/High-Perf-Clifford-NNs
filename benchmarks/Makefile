@@ -1,14 +1,16 @@
 
 INCLUDE = -I../csrc
 
-CFLAGS  = -O3 -DPMU -llapacke -lopenblas -DBUILD_MAIN $(INCLUDE)
+CC       := gcc
+CFLAGS   := -O3 -DPMU -fPIC -Wno-alloc-size-larger-than -DBUILD_MAIN  $(INCLUDE)
+LDFLAGS  :=  -llapacke -lopenblas
 
 SRCS    = bench_forward.c ../csrc/clifford_linear.c ../csrc/clifford_groupnorm.c
 
 all: bench_main
 
 bench_main: $(SRCS)
-	gcc $(CFLAGS) $(SRCS) -o bench_main
+	gcc $(CFLAGS) $(SRCS) -o bench_main $(LDFLAGS)
 
 clean:
 	rm -f bench_main

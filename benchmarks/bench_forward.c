@@ -47,13 +47,13 @@ void setup_linear(int B, int C, int dim, int O, int *g_sig)
     lin_O = O;
     lin_g = g_sig;
 
-    int I = 1 << dim;
-    lin_D = I;
+    int _I = 1 << dim; //this needs to be _I since the libs have I defined as a makro
+    lin_D = _I;
 
-    lin_x = malloc(sizeof(float) * B * C * I);
-    lin_out = malloc(sizeof(float) * B * O * I);
+    lin_x = malloc(sizeof(float) * B * C * _I);
+    lin_out = malloc(sizeof(float) * B * O * _I);
 
-    for (int i = 0, N = B * C * I; i < N; i++)
+    for (int i = 0, N = B * C * _I; i < N; i++)
         lin_x[i] = rand() / (float)RAND_MAX;
 
     L_lin = clifford_linear_create(g_sig, dim, C, O, true);
@@ -63,11 +63,11 @@ void setup_linear(int B, int C, int dim, int O, int *g_sig)
         exit(1);
     }
 
-    size_t nW = (size_t)I * O * C;
+    size_t nW = (size_t)_I * O * C;
     for (size_t i = 0; i < nW; i++)
         L_lin->weight[i] = rand() / (float)RAND_MAX;
 
-    size_t nB = (size_t)I * O;
+    size_t nB = (size_t)_I * O;
     for (size_t i = 0; i < nB; i++)
         L_lin->bias[i] = rand() / (float)RAND_MAX;
 }
@@ -84,17 +84,17 @@ void cleanup_linear()
     clifford_linear_destroy(L_lin);
 }
 
-void setup_groupnorm(int B, int C, int Dflat, int I, int G)
+void setup_groupnorm(int B, int C, int Dflat, int _I, int G)
 {
     gn_B = B;
     gn_C = C;
     gn_Dflat = Dflat;
-    gn_I = I;
+    gn_I = _I;
     gn_G = G;
     gn_has_running = false;
     gn_has_affine = false;
 
-    size_t N = (size_t)B * C * Dflat * I;
+    size_t N = (size_t)B * C * Dflat * _I;
     gn_x = malloc(N * sizeof(float));
     gn_out = malloc(N * sizeof(float));
 
@@ -415,7 +415,7 @@ double queryperfcounter(double A[], double B[], double C[], int n, LARGE_INTEGER
 #ifdef BUILD_MAIN
 int main(int argc, char **argv)
 {
-    int B, C, O, dim, I, Dflat, G;
+    int B, C, O, dim, _I, Dflat, G;
 
     if (argc < 2)
     {
@@ -460,10 +460,10 @@ int main(int argc, char **argv)
         B = atoi(argv[2]);
         C = atoi(argv[3]);
         Dflat = atoi(argv[4]);
-        I = atoi(argv[5]);
+        _I = atoi(argv[5]);
         G = atoi(argv[6]);
 
-        setup_groupnorm(B, C, Dflat, I, G);
+        setup_groupnorm(B, C, Dflat, _I, G);
         compute = compute_groupnorm;
     }
     else
