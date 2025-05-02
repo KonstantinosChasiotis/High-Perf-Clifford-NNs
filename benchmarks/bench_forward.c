@@ -599,6 +599,8 @@ int main(int argc, char **argv)
         cleanup_linear();
     } else if (compute == compute_groupnorm){ 
         cleanup_groupnorm();
+    } else if (compute == compute_act){ 
+        cleanup_act();
     }
     printf("Done.\n");
     return 0;
