@@ -1,10 +1,24 @@
 # Team #75: High-Performance Clifford Layers in C
 
+## Installation
+
+```bash
+# create and activate env
+cd cliffordlayers
+conda env create --file docker/environment.yml
+conda activate cliffordlayers
+# Install all dependencies
+pip install -e .
+sudo apt install -y liblapacke-dev libopenblas-dev
+```
+
 ## How to run tests
 
 ```bash
 make
 pytest tests/test_linear_c_vs_py.py
+pytest tests/test_act_c_vs_py.py
+pytest tests/test_groupnorm_c_vs_py.py
 ```
 
 ## LAPCKE and BLAS installs used
@@ -25,19 +39,6 @@ Starting from the reference Python implementation (provided by the authors in th
 2. **Multi‑Vector Sigmoid Linear Units** (activation nonlinearities) [4]
 3. **Group Normalizations** [5]
 
-
-## Testing
-
-```bash
-# create and activate env
-cd cliffordlayers
-conda env create --file docker/environment.yml
-conda activate cliffordlayers
-# Install all dependencies
-pip install -e .
-# Build the C extension
-make               # compiles and test the c code
-```
 
 ## References
 
