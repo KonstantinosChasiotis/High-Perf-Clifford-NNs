@@ -40,19 +40,6 @@ Starting from the reference Python implementation (provided by the authors in th
 3. **Group Normalizations** [5]
 
 
-## Testing
-
-```bash
-# create and activate env
-cd cliffordlayers
-conda env create --file docker/environment.yml
-conda activate cliffordlayers
-# Install all dependencies
-pip install -e .
-# Build the C extension
-make               # compiles and test the c code
-```
-
 ## References
 
 [1] J. Brandstetter et al., *Clifford Neural Layers for PDE Modeling*, arXiv:2209.04934 (2022).
