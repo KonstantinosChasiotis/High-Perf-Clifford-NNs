@@ -14,7 +14,7 @@ extern "C" {
 /// out:    [B][C][L][I]      (may alias x)
 void mv_act_forward(
     const float *x,
-    int B, int C, int L, int I,
+    int B, int C, int L, int _I,
     const float *weight,
     int K,
     const int *kernel_blades,

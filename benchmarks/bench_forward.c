@@ -20,6 +20,7 @@
 
 #include "clifford_linear.h"
 #include "clifford_groupnorm.h"
+#include "mv_act.h"
 
 #define NUM_RUNS 1
 #define CYCLES_REQUIRED 1e8
@@ -39,6 +40,63 @@ static float *gn_x, *gn_out;
 static int gn_B, gn_C, gn_Dflat, gn_I, gn_G;
 static bool gn_has_running, gn_has_affine;
 static float *gn_running_mean, *gn_running_cov, *gn_weight, *gn_bias;
+
+//act vars
+static float *act_x, *act_out;
+static int act_B, act_C, act_L, act_I;
+static float * act_weight;
+static int act_K;
+static int * act_kernel_blades;
+
+void setup_act(int B, int C, int L, int _I, int K)
+{
+    act_B = B;
+    act_C = C;
+    act_L = L;
+    act_I = _I;
+    act_K = K;
+
+    size_t N = (size_t)B * C * L * _I;
+    act_x = malloc(N * sizeof(float));
+    act_out = malloc(N * sizeof(float));
+
+    for (size_t i = 0; i < N; i++)
+    {
+        act_x[i] = rand() / (float)RAND_MAX;
+    }
+
+    act_weight = malloc(C * K * sizeof(float));
+    for (size_t i = 0; i < C * K; i++)
+    {
+        act_weight[i] = rand() / (float)RAND_MAX;
+    }
+    act_kernel_blades = malloc(K * sizeof(int));
+    for (size_t i = 0; i < K; i++)
+    {
+        act_kernel_blades[i] = 1; //SH: simplificaiton but has to do for now
+    }
+}
+
+void compute_act(double A[], double B[], double C[], int n)
+{
+    mv_act_forward(
+        act_x,
+        act_B, act_C, act_L, act_I,
+        act_weight,
+        act_K,
+        act_kernel_blades,
+        act_out
+    );
+}
+
+void cleanup_act()
+{
+    free(act_x);
+    free(act_out);
+    free(act_weight);
+    free(act_kernel_blades);
+}
+
 
 void setup_linear(int B, int C, int dim, int O, int *g_sig)
 {
@@ -415,14 +473,15 @@ double queryperfcounter(double A[], double B[], double C[], int n, LARGE_INTEGER
 #ifdef BUILD_MAIN
 int main(int argc, char **argv)
 {
-    int B, C, O, dim, _I, Dflat, G;
+    int B, C, O, dim, _I, Dflat, G, L, K;
 
     if (argc < 2)
     {
         fprintf(stderr, "Usage:\n"
                         "  %s linear B C dim O sig_len\n"
-                        "  %s groupnorm B C Dflat I G\n",
-                argv[0], argv[0]);
+                        "  %s groupnorm B C Dflat I G\n"
+                        "  %s act B C L I K\n",
+                argv[0], argv[0], argv[0]);
         return 1;
     }
 
@@ -465,6 +524,22 @@ int main(int argc, char **argv)
 
         setup_groupnorm(B, C, Dflat, _I, G);
         compute = compute_groupnorm;
+    } else if (strcmp(mode, "act") == 0)
+    {
+        if (argc != 7)
+        {
+            fprintf(stderr, "act needs 6 args\n");
+            return 1;
+        }
+
+        B = atoi(argv[2]);
+        C = atoi(argv[3]);
+        L = atoi(argv[4]);
+        _I = atoi(argv[5]);
+        K = atoi(argv[6]);
+
+        setup_act(B, C, L, _I, K);
+        compute = compute_act;
     }
     else
     {

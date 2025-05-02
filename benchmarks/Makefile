@@ -3,9 +3,9 @@ INCLUDE = -I../csrc
 
 CC       := gcc
 CFLAGS   := -O3 -DPMU -fPIC -Wno-alloc-size-larger-than -DBUILD_MAIN  $(INCLUDE)
-LDFLAGS  :=  -llapacke -lopenblas
+LDFLAGS  :=  -llapacke -lopenblas -lm
 
-SRCS    = bench_forward.c ../csrc/clifford_linear.c ../csrc/clifford_groupnorm.c
+SRCS    = bench_forward.c ../csrc/clifford_linear.c ../csrc/clifford_groupnorm.c ../csrc/mv_act.c
 
 all: bench_main
 
