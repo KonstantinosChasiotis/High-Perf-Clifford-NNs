@@ -1,7 +1,6 @@
 #include "clifford_linear.h"
 #include <string.h>
 #include <math.h>
-#include "instrument.h"
 
 /// Kernel generators:
 /// Each allocates a float array of shape
@@ -486,66 +485,69 @@ void clifford_linear_destroy(CliffordLinear *L)
 }
 
 /// Performs: out[b] = K * flatten(x[b]) + bias, reshaped back
-
 void clifford_linear_forward(
     const CliffordLinear *L,
     const float *x,
     int B,
     float *out)
 {
-    // reset flop counter
-    __flop_count = 0;
-
     int I = L->sig.n_blades;
     int Cin = L->in_channels;
     int Cout = L->out_channels;
     int Dflat = Cin * I;
     int Nflat = Cout * I;
 
-    // flatten input
+    // 1) flatten input per sample
     float *Xf = malloc(sizeof(float) * B * Dflat);
-    for (int b = 0; b < B; b++) {
-        for (int i = 0; i < I; i++) {
-            for (int c = 0; c < Cin; c++) {
-                Xf[b*Dflat + i*Cin + c] = x[b*(Cin*I) + c*I + i];
+    for (int b = 0; b < B; b++)
+    {
+        for (int i = 0; i < I; i++)
+        {
+            for (int c = 0; c < Cin; c++)
+            {
+                Xf[b * Dflat + i * Cin + c] = x[b * (Cin * I) + c * I + i];
             }
         }
     }
 
-    // build kernel
+    // 2) build kernel
     int nb;
     float *K;
     L->get_kernel(L->weight, L->sig.g, Cin, Cout, &nb, &K);
+    // nb should equal I
 
-    // mat-vec + bias with instrumentation
+    // 3) mat‐vec + bias
     float *Yf = malloc(sizeof(float) * B * Nflat);
-    for (int b = 0; b < B; b++) {
-        for (int r = 0; r < Nflat; r++) {
+    for (int b = 0; b < B; b++)
+    {
+        for (int r = 0; r < Nflat; r++)
+        {
             float acc = 0.f;
-            for (int d = 0; d < Dflat; d++) {
-                float prod = MUL(K[r*Dflat + d], Xf[b*Dflat + d]);
-                acc = ADD(acc, prod);
+            for (int d = 0; d < Dflat; d++)
+            {
+                acc += K[r * Dflat + d] * Xf[b * Dflat + d];
             }
-            if (L->bias) {
-                acc = ADD(acc, L->bias[r]);
+            if (L->bias)
+            {
+                acc += L->bias[r];
             }
-            Yf[b*Nflat + r] = acc;
+            Yf[b * Nflat + r] = acc;
         }
     }
-
     free(Xf);
     free(K);
 
-    // reshape back
-    for (int b = 0; b < B; b++) {
-        for (int i = 0; i < I; i++) {
-            for (int c = 0; c < Cout; c++) {
-                out[b*(Cout*I) + c*I + i] = Yf[b*Nflat + i*Cout + c];
+    // 4) reshape back
+    for (int b = 0; b < B; b++)
+    {
+        for (int i = 0; i < I; i++)
+        {
+            for (int c = 0; c < Cout; c++)
+            {
+                out[b * (Cout * I) + c * I + i] =
+                    Yf[b * Nflat + i * Cout + c];
             }
         }
     }
     free(Yf);
-
-    // report total flops
-    REPORT_FLOPS();
 }
