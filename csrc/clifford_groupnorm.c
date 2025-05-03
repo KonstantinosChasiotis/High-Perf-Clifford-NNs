@@ -239,13 +239,25 @@ void clifford_groupnorm_forward(
 
     //solve triangular
     float * x_norm_here = calloc(x_size, sizeof(float));
+    //float * x_norm_old = calloc(x_size, sizeof(float));
     for(int i = 0; i < x_size; i++){ //copy as it will be overwritten by blas function
         x_norm_here[i] = x_centered[i];
+        //x_norm_old[i] = x_centered[i];
     }
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
-            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI divs
-                    cblas_strsv(CblasRowMajor, CblasUpper, CblasNoTrans ,CblasNonUnit, _I, &U[i*_I*_I], _I, &x_norm_here[i*num_groups*D*_I + j*D*_I + k*_I], 1);
+            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI div
+                    //cblas_strsv(CblasRowMajor, CblasUpper, CblasNoTrans ,CblasNonUnit, _I, &U[i*_I*_I], _I, &x_norm_old[i*num_groups*D*_I + j*D*_I + k*_I], 1);
+                    float *mat = U + (i*_I*_I);
+                    float *vec = x_norm_here + (i*num_groups*D*_I + j*D*_I + k*_I);
+                    for(int r = _I-1; r >= 0; r--){//from last row to first
+                        float rowsum = 0.0f;
+                        for(int c = _I-1; c > r; c--){//do the partioal vec row mult
+                            rowsum += mat[r*_I + c]*vec[c];
+                        }
+                        rowsum = vec[r] - rowsum;
+                        vec[r] = rowsum / mat[r*_I + r];
+                    }
             }
         }
     }
