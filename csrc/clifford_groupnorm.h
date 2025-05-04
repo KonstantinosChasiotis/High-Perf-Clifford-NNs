@@ -18,6 +18,7 @@ TODO: - do backsub manual: done SH
 #include <math.h>
 #include <cblas.h>
 #include <lapacke.h>
+#include "flops.h"
 
 void clifford_groupnorm_notemp( //wrapper around with memory allocation around clifford_groupnorm_temp
     const float *x,

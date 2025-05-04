@@ -151,6 +151,8 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
     float eps,
     float *x_norm){
 
+    FLOPS_RESET();
+
     clifford_groupnorm_part0(
         x,
         B,
@@ -199,6 +201,9 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         momentum,
         eps,
         x_norm);
+    
+
+    FLOPS_READOUT();
 
     return;
     }
@@ -228,7 +233,7 @@ void clifford_groupnorm_part0(
     //basic constants
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
-
+    
     //blow up running mean and cov along the batch dim
     if ( running ){
         for(int i = 0; i < _I; i++){ //COST: 0 flops
@@ -255,6 +260,7 @@ void clifford_groupnorm_part0(
             for(int j = 0; j < num_groups; j++){
                 for(int k = 0; k < D; k++){
                     for(int l = 0; l < _I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
+                        FLOP_ADD(1);
                         mean_temp[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
                     }
                 }
@@ -262,13 +268,16 @@ void clifford_groupnorm_part0(
         }
         for(int i = 0; i < dim0; i++){
             for(int l = 0; l < _I; l++){ //COST: dim0*I
+                FLOP_DIV(1);
                 mean_temp[i*_I + l] /= (D*num_groups);
             }
         }
         if (running){ //update running mean
             for(int i = 0; i < _I; i++){
                 for(int j = 0; j < dim0; j++){
-                        running_mean_temp[i*dim0 + j] += momentum *(mean_temp[j*_I + i] - running_mean_temp[i*dim0 + j]);
+                    FLOP_ADD(2);
+                    FLOP_MULT(1);
+                    running_mean_temp[i*dim0 + j] += momentum *(mean_temp[j*_I + i] - running_mean_temp[i*dim0 + j]);
                 }
             }
         }
@@ -285,6 +294,7 @@ void clifford_groupnorm_part0(
         for(int j = 0; j < num_groups; j++){
             for(int k = 0; k < D; k++){
                 for(int l = 0; l < _I; l++){
+                    FLOP_ADD(1);
                     x_norm[i*num_groups*D*_I + j*D*_I + k*_I + l] = x[i*num_groups*D*_I + j*D*_I + k*_I + l] - mean_temp[i*_I + l];
                 }
             }
@@ -308,17 +318,22 @@ void clifford_groupnorm_part0(
             for(int j = 0; j < _I; j++){ //row selector
                 for(int l = 0; l < _I; l++){ //col selector
                     for(int k = 0; k < num_groups*D; k++){
+                        FLOP_ADD(1);
+                        FLOP_MULT(1);
                         cov_temp[i*_I*_I + j*_I + l] += X_temp[i*_I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*_I + k*_I + l];
         }}}}
         //scale all of cov
         size_t cov_size = dim0*_I*_I;
         for(int i = 0; i < cov_size; i++){
+            FLOP_DIV(1);
             cov_temp[i] /= (num_groups * D);
         }
         if (running) { //upadate running cov
             for(int i = 0; i < _I; i++){            
                 for(int ii = 0; ii < _I; ii++){
                     for(int j = 0; j < dim0; j++){
+                        FLOP_ADD(2);
+                        FLOP_MULT(1);
                         running_cov_temp[i*_I*dim0 + ii*dim0 + j] += momentum *(cov_temp[j*_I*_I + i*_I + ii] - running_cov_temp[i*_I*dim0 + ii*dim0 + j]);
                     }
                 }
@@ -343,11 +358,13 @@ void clifford_groupnorm_part0(
         for(int i = 0; i < _I; i++){
             for(int j = 0; j < group_size; j++){
                 for(int l = 0; l < B; l++){
+                    FLOP_ADD(1);
                     running_mean_orig[i*group_size + j] += running_mean_temp[i*group_size*B + l*group_size + j];
                 }
             }
         }
         for(int i = 0; i < _I*group_size; i++){
+            FLOP_DIV(1);
             running_mean_orig[i] /= B;
         }
         //cov
@@ -358,12 +375,14 @@ void clifford_groupnorm_part0(
             for(int ii = 0; ii < _I; ii++){
                 for(int j = 0; j < group_size; j++){
                     for(int l = 0; l < B; l++){
+                        FLOP_ADD(1);
                         running_cov_orig[i*_I*group_size + ii*group_size + j] += running_cov_temp[i*_I*group_size*B + ii*group_size*B + l*group_size + j];
                     }
                 }
             }
         }
         for(int i = 0; i < _I*_I*group_size; i++){
+            FLOP_DIV(1);
             running_cov_orig[i] /= B;
         }
 
@@ -380,6 +399,7 @@ void clifford_groupnorm_part0(
     //add pertubation to diagonal
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < _I; j++){
+            FLOP_ADD(1);
             cov_temp[i*_I*_I + j*_I + j] += max_temp[i]*eps;
     }}
     return;
@@ -441,9 +461,13 @@ void clifford_groupnorm_part1(
                     for(int r = _I-1; r >= 0; r--){//from last row to first
                         float rowsum = 0.0f;
                         for(int c = _I-1; c > r; c--){//do the partioal vec row mult
+                            FLOP_ADD(1);
+                            FLOP_MULT(1);
                             rowsum += mat[r*_I + c]*vec[c];
                         }
+                        FLOP_ADD(1);
                         rowsum = vec[r] - rowsum;
+                        FLOP_DIV(1);
                         vec[r] = rowsum / mat[r*_I + r];
                     }
             }
@@ -452,7 +476,6 @@ void clifford_groupnorm_part1(
 
     //blow up weight and bias
     if ( scaling ){
-        
         for(int i = 0; i < _I; i++){
             for(int ii = 0; ii < _I; ii++){
                 for(int j = 0; j < group_size; j++){
@@ -495,8 +518,11 @@ void clifford_groupnorm_part1(
                     for(int ii = 0; ii < _I; ii++){
                         vecmult[ii] = 0.0f;
                         for(int jj = 0; jj < _I; jj++){
+                            FLOP_ADD(1);
+                            FLOP_MULT(1);
                             vecmult[ii] += W[ii*_I + jj] * xv[jj];
                         }
+                        FLOP_ADD(1);
                         vecmult[ii] += b[ii];
                     }
                     for(int ii = 0; ii < _I; ii++){
