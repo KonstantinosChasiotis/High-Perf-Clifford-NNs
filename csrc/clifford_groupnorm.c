@@ -151,6 +151,118 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
     float eps,
     float *x_norm){
 
+    clifford_groupnorm_part0(
+        x,
+        B,
+        C,
+        D,
+        _I,
+        num_groups,
+        running,
+        running_mean_orig,
+        running_mean_temp,
+        running_cov_orig,
+        running_cov_temp,
+        scaling,
+        weight_orig,
+        weight_temp,
+        weight_perm_temp,
+        bias_orig,
+        bias_temp,
+        mean_temp,
+        X_temp,
+        cov_temp,
+        max_temp,
+        training,
+        momentum,
+        eps,
+        x_norm);
+
+    clifford_groupnorm_lapacke(
+        x,
+        B,
+        C,
+        D,
+        _I,
+        num_groups,
+        running,
+        running_mean_orig,
+        running_mean_temp,
+        running_cov_orig,
+        running_cov_temp,
+        scaling,
+        weight_orig,
+        weight_temp,
+        weight_perm_temp,
+        bias_orig,
+        bias_temp,
+        mean_temp,
+        X_temp,
+        cov_temp,
+        max_temp,
+        training,
+        momentum,
+        eps,
+        x_norm);
+    
+    clifford_groupnorm_part1(
+        x,
+        B,
+        C,
+        D,
+        _I,
+        num_groups,
+        running,
+        running_mean_orig,
+        running_mean_temp,
+        running_cov_orig,
+        running_cov_temp,
+        scaling,
+        weight_orig,
+        weight_temp,
+        weight_perm_temp,
+        bias_orig,
+        bias_temp,
+        mean_temp,
+        X_temp,
+        cov_temp,
+        max_temp,
+        training,
+        momentum,
+        eps,
+        x_norm);
+
+    return;
+    }
+    
+
+void clifford_groupnorm_part0(
+    const float *x,
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    float *running_mean_orig,
+    float *running_mean_temp,
+    float *running_cov_orig,
+    float *running_cov_temp,
+    bool scaling,
+    const float *weight_orig,
+    float *weight_temp,
+    float *weight_perm_temp,
+    const float *bias_orig,
+    float *bias_temp,
+    float *mean_temp, //(dim0, _I)
+    float *X_temp,
+    float *cov_temp,
+    float *max_temp,
+    bool training,
+    float momentum,
+    float eps,
+    float *x_norm){
+
     //basic constants
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -308,7 +420,40 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         for(int j = 0; j < _I; j++){
             cov_temp[i*_I*_I + j*_I + j] += max_temp[i]*eps;
     }}
+    return;
+}
 
+void clifford_groupnorm_lapacke(
+    const float *x,
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    float *running_mean_orig,
+    float *running_mean_temp,
+    float *running_cov_orig,
+    float *running_cov_temp,
+    bool scaling,
+    const float *weight_orig,
+    float *weight_temp,
+    float *weight_perm_temp,
+    const float *bias_orig,
+    float *bias_temp,
+    float *mean_temp, //(dim0, _I)
+    float *X_temp,
+    float *cov_temp,
+    float *max_temp,
+    bool training,
+    float momentum,
+    float eps,
+    float *x_norm) {
+
+    //basic constants
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+        
     //cholesky decomp need to pass U (cov) and result
     int info;
     for(int i = 0; i < dim0; i++){
@@ -317,7 +462,39 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         if (info > 0) {printf("The matrix is not positive definite.\n");return;}
         if (info < 0) {printf("Illegal value in argument %d\n", -info);return;}
     }
+    return;
+}
 
+void clifford_groupnorm_part1(
+    const float *x,
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    float *running_mean_orig,
+    float *running_mean_temp,
+    float *running_cov_orig,
+    float *running_cov_temp,
+    bool scaling,
+    const float *weight_orig,
+    float *weight_temp,
+    float *weight_perm_temp,
+    const float *bias_orig,
+    float *bias_temp,
+    float *mean_temp, //(dim0, _I)
+    float *X_temp,
+    float *cov_temp,
+    float *max_temp,
+    bool training,
+    float momentum,
+    float eps,
+    float *x_norm){
+
+    //basic constants
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
 
     //solve triangular
     for(int i = 0; i < dim0; i++){
