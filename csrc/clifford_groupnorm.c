@@ -55,14 +55,14 @@ void clifford_groupnorm_notemp( //wrapper around with memory allocation around c
         size_t running_mean_size = _I * dim0;
         running_mean_temp = calloc(running_mean_size, sizeof(float));
         size_t running_cov_size = _I* _I * dim0;
-        running_cov_temp = calloc(running_cov_size, sizeof(float)); //(_I,_I,dim0)
+        running_cov_temp = calloc(running_cov_size, sizeof(float));
     }
     float *weight_temp = NULL;
     float *bias_temp = NULL;
     float *weight_perm_temp = NULL;
     if (scaling){
         size_t weight_size = _I* _I * dim0;
-        weight_temp = calloc(weight_size, sizeof(float)); // (_I,_I,dim0)
+        weight_temp = calloc(weight_size, sizeof(float));
         size_t bias_size = _I * dim0;
         bias_temp = calloc(bias_size, sizeof(float));
         weight_perm_temp = calloc(weight_size, sizeof(float));
@@ -142,7 +142,7 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
     float *weight_perm_temp,
     const float *bias_orig,
     float *bias_temp,
-    float *mean_temp, //(dim0, _I)
+    float *mean_temp,
     float *X_temp,
     float *cov_temp,
     float *max_temp,
@@ -163,12 +163,6 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         running_mean_temp,
         running_cov_orig,
         running_cov_temp,
-        scaling,
-        weight_orig,
-        weight_temp,
-        weight_perm_temp,
-        bias_orig,
-        bias_temp,
         mean_temp,
         X_temp,
         cov_temp,
@@ -185,25 +179,7 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         D,
         _I,
         num_groups,
-        running,
-        running_mean_orig,
-        running_mean_temp,
-        running_cov_orig,
-        running_cov_temp,
-        scaling,
-        weight_orig,
-        weight_temp,
-        weight_perm_temp,
-        bias_orig,
-        bias_temp,
-        mean_temp,
-        X_temp,
-        cov_temp,
-        max_temp,
-        training,
-        momentum,
-        eps,
-        x_norm);
+        cov_temp);
     
     clifford_groupnorm_part1(
         x,
@@ -212,21 +188,13 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         D,
         _I,
         num_groups,
-        running,
-        running_mean_orig,
-        running_mean_temp,
-        running_cov_orig,
-        running_cov_temp,
         scaling,
         weight_orig,
         weight_temp,
         weight_perm_temp,
         bias_orig,
         bias_temp,
-        mean_temp,
-        X_temp,
         cov_temp,
-        max_temp,
         training,
         momentum,
         eps,
@@ -248,13 +216,7 @@ void clifford_groupnorm_part0(
     float *running_mean_temp,
     float *running_cov_orig,
     float *running_cov_temp,
-    bool scaling,
-    const float *weight_orig,
-    float *weight_temp,
-    float *weight_perm_temp,
-    const float *bias_orig,
-    float *bias_temp,
-    float *mean_temp, //(dim0, _I)
+    float *mean_temp,
     float *X_temp,
     float *cov_temp,
     float *max_temp,
@@ -430,25 +392,7 @@ void clifford_groupnorm_lapacke(
     int D,
     int _I,
     int num_groups,
-    bool running,
-    float *running_mean_orig,
-    float *running_mean_temp,
-    float *running_cov_orig,
-    float *running_cov_temp,
-    bool scaling,
-    const float *weight_orig,
-    float *weight_temp,
-    float *weight_perm_temp,
-    const float *bias_orig,
-    float *bias_temp,
-    float *mean_temp, //(dim0, _I)
-    float *X_temp,
-    float *cov_temp,
-    float *max_temp,
-    bool training,
-    float momentum,
-    float eps,
-    float *x_norm) {
+    float *cov_temp){
 
     //basic constants
     int dim0 = (B*C)/num_groups;
@@ -472,21 +416,13 @@ void clifford_groupnorm_part1(
     int D,
     int _I,
     int num_groups,
-    bool running,
-    float *running_mean_orig,
-    float *running_mean_temp,
-    float *running_cov_orig,
-    float *running_cov_temp,
     bool scaling,
     const float *weight_orig,
     float *weight_temp,
     float *weight_perm_temp,
     const float *bias_orig,
     float *bias_temp,
-    float *mean_temp, //(dim0, _I)
-    float *X_temp,
     float *cov_temp,
-    float *max_temp,
     bool training,
     float momentum,
     float eps,
@@ -554,7 +490,6 @@ void clifford_groupnorm_part1(
                     //xn = Wx + b
                     float *W = weight_perm_temp + i*_I*_I;
                     float *xv = x_norm + i*num_groups*D*_I + j*D*_I + l*_I;
-                    //float *xn = x_norm + i*num_groups*D*_I + j*D*_I + l*_I;
                     float *b = bias_temp + i*_I;
                     //(I,I)x(I,1)
                     for(int ii = 0; ii < _I; ii++){
