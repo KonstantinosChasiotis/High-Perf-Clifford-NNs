@@ -76,32 +76,6 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //blow up weight and bias
-    float * weight;
-    float * bias;
-    if ( scaling ){
-        size_t weight_size = _I* _I * dim0;
-        weight = calloc(weight_size, sizeof(float)); // (_I,_I,dim0)
-        for(int i = 0; i < _I; i++){
-            for(int ii = 0; ii < _I; ii++){
-                for(int j = 0; j < group_size; j++){
-                    for(int l = 0; l < B; l++){
-                        weight[i*_I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
-                    }
-                }
-            }
-        }
-        size_t bias_size = _I * dim0;
-        bias = calloc(bias_size, sizeof(float));
-        for(int i = 0; i < _I; i++){
-            for(int j = 0; j < group_size; j++){
-                for(int l = 0; l < B; l++){
-                    bias[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
-                }
-            }
-        }
-    }
-
     //mean
     size_t mean_size = dim0 * _I;
     float * mean = calloc(mean_size, sizeof(float));
@@ -137,7 +111,7 @@ void clifford_groupnorm_forward(
 
     //subtract mean form x
     size_t x_size = dim0 * num_groups * D * _I;
-    float * x_centered = calloc(x_size, sizeof(float));
+    float * x_centered = calloc(x_size, sizeof(float)); //could write this into the result
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
             for(int k = 0; k < D; k++){
@@ -160,16 +134,6 @@ void clifford_groupnorm_forward(
         }
     }
 
-    //transpose X (think this is the same as x_centered .... ups)
-    float * XT = calloc(x_size, sizeof(float));
-    for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < _I; j++){
-            for(int k = 0; k < num_groups * D; k++){
-                    XT[i*_I*num_groups*D + k*_I + j] = X[i*_I*num_groups*D + j*num_groups*D + k];
-            }
-        }
-    }
-
     //calc cov
     size_t cov_size = dim0*_I*_I;
     float * cov = calloc(cov_size, sizeof(float));
@@ -178,7 +142,7 @@ void clifford_groupnorm_forward(
             for(int j = 0; j < _I; j++){ //row selector
                 for(int l = 0; l < _I; l++){ //col selector
                     for(int k = 0; k < num_groups*D; k++){
-                        cov[i*_I*_I + j*_I + l] += X[i*_I*num_groups*D + j*num_groups*D + k]* XT[i*num_groups*D*_I + k*_I + l];
+                        cov[i*_I*_I + j*_I + l] += X[i*_I*num_groups*D + j*num_groups*D + k]* x_centered[i*num_groups*D*_I + k*_I + l];
         }}}}
         //scale all of cov
         for(int i = 0; i < cov_size; i++){
@@ -199,65 +163,6 @@ void clifford_groupnorm_forward(
                 for(int j = 0; j < dim0; j++){
                     cov[j*_I*_I + i*_I + ii] = running_cov[i*_I*dim0 + ii*dim0 + j];
                 }
-            }
-        }
-    }
-
-    //get max for each groups cov matrix
-    size_t max_values_size = dim0;
-    float * max_values = calloc(max_values_size, sizeof(float));
-    for(int i = 0; i < dim0; i++){
-        max_values[i] = cov[i*_I*_I];
-        for(int j = 1; j < _I*_I; j++){
-            max_values[i] = cov[i*_I*_I + j] > max_values[i] ? cov[i*_I*_I + j] : max_values[i];
-        }
-    }
-
-    //add pertubation to diagonal
-    float * cov_eye = calloc(cov_size, sizeof(float));
-    for(int i = 0; i < cov_size; i++){
-        cov_eye[i] = cov[i];
-    }
-    for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < _I; j++){
-                    cov_eye[i*_I*_I + j*_I + j] += max_values[i]*eps;
-    }}
-
-    //cholesky decomp
-    float * U = calloc(cov_size, sizeof(float));
-    for(int i = 0; i < cov_size; i++){ //copy since cholseky is inplace
-        U[i] = cov_eye[i];
-    }
-    int info;
-    for(int i = 0; i < dim0; i++){
-        //COST: https://en.wikipedia.org/wiki/Cholesky_decomposition (I^3)/6 adds and mults
-        info = LAPACKE_spotrf(LAPACK_ROW_MAJOR, 'U', _I, &U[i*_I*_I], _I); //does not mask of lower half....
-        if (info > 0) {printf("The matrix is not positive definite.\n");return;}
-        if (info < 0) {printf("Illegal value in argument %d\n", -info);return;}
-    }
-
-
-    //solve triangular
-    float * x_norm_here = calloc(x_size, sizeof(float));
-    //float * x_norm_old = calloc(x_size, sizeof(float));
-    for(int i = 0; i < x_size; i++){ //copy as it will be overwritten by blas function
-        x_norm_here[i] = x_centered[i];
-        //x_norm_old[i] = x_centered[i];
-    }
-    for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < num_groups; j++){
-            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI div
-                    //cblas_strsv(CblasRowMajor, CblasUpper, CblasNoTrans ,CblasNonUnit, _I, &U[i*_I*_I], _I, &x_norm_old[i*num_groups*D*_I + j*D*_I + k*_I], 1);
-                    float *mat = U + (i*_I*_I);
-                    float *vec = x_norm_here + (i*num_groups*D*_I + j*D*_I + k*_I);
-                    for(int r = _I-1; r >= 0; r--){//from last row to first
-                        float rowsum = 0.0f;
-                        for(int c = _I-1; c > r; c--){//do the partioal vec row mult
-                            rowsum += mat[r*_I + c]*vec[c];
-                        }
-                        rowsum = vec[r] - rowsum;
-                        vec[r] = rowsum / mat[r*_I + r];
-                    }
             }
         }
     }
@@ -296,6 +201,88 @@ void clifford_groupnorm_forward(
         }
         free(running_mean);
         free(running_cov);
+    }
+
+    //get max for each groups cov matrix
+    size_t max_values_size = dim0;
+    float * max_values = calloc(max_values_size, sizeof(float));
+    for(int i = 0; i < dim0; i++){
+        max_values[i] = cov[i*_I*_I];
+        for(int j = 1; j < _I*_I; j++){
+            max_values[i] = cov[i*_I*_I + j] > max_values[i] ? cov[i*_I*_I + j] : max_values[i];
+        }
+    }
+
+    //add pertubation to diagonal
+    float * cov_eye = calloc(cov_size, sizeof(float)); //overwrite
+    for(int i = 0; i < cov_size; i++){
+        cov_eye[i] = cov[i];
+    }
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < _I; j++){
+                    cov_eye[i*_I*_I + j*_I + j] += max_values[i]*eps;
+    }}
+
+    //cholesky decomp //need to pass U (cov) and result
+    float * U = calloc(cov_size, sizeof(float)); //just use cov
+    for(int i = 0; i < cov_size; i++){ //copy since cholseky is inplace
+        U[i] = cov_eye[i];
+    }
+    int info;
+    for(int i = 0; i < dim0; i++){
+        //COST: https://en.wikipedia.org/wiki/Cholesky_decomposition (I^3)/6 adds and mults
+        info = LAPACKE_spotrf(LAPACK_ROW_MAJOR, 'U', _I, &U[i*_I*_I], _I); //does not mask of lower half....
+        if (info > 0) {printf("The matrix is not positive definite.\n");return;}
+        if (info < 0) {printf("Illegal value in argument %d\n", -info);return;}
+    }
+
+
+    //solve triangular
+    float * x_norm_here = calloc(x_size, sizeof(float)); //use result
+    for(int i = 0; i < x_size; i++){ //copy as it will be overwritten by blas function
+        x_norm_here[i] = x_centered[i];
+    }
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI div
+                    float *mat = U + (i*_I*_I);
+                    float *vec = x_norm_here + (i*num_groups*D*_I + j*D*_I + k*_I);
+                    for(int r = _I-1; r >= 0; r--){//from last row to first
+                        float rowsum = 0.0f;
+                        for(int c = _I-1; c > r; c--){//do the partioal vec row mult
+                            rowsum += mat[r*_I + c]*vec[c];
+                        }
+                        rowsum = vec[r] - rowsum;
+                        vec[r] = rowsum / mat[r*_I + r];
+                    }
+            }
+        }
+    }
+
+    //blow up weight and bias
+    float * weight;
+    float * bias;
+    if ( scaling ){
+        size_t weight_size = _I* _I * dim0;
+        weight = calloc(weight_size, sizeof(float)); // (_I,_I,dim0)
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        weight[i*_I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
+                }
+            }
+        }
+        size_t bias_size = _I * dim0;
+        bias = calloc(bias_size, sizeof(float));
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    bias[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
     }
 
     //scaling or just copy over
@@ -349,7 +336,6 @@ void clifford_groupnorm_forward(
     free(cov_eye);
     free(max_values);
     free(cov);
-    free(XT);
     free(X);
     free(x_centered);
     free(mean);

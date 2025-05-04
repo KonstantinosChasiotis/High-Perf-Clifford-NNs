@@ -2,8 +2,8 @@
 #define CLIFFORD_GROUPNORM_H
 
 /*
-TODO: - do backsub manual
-      - determine all the temp arrays we need and give them as args
+TODO: - do backsub manual: done SH
+      - determine all the temp arrays we need and give them as args: 
       - split in pre and post cholesky
       - implement flops counting macro
       - change the benachmarks script to reflect the new implementaiton
