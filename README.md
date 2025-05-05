@@ -89,16 +89,16 @@
 - [ ] Write project paper  
 
 
-### Additional infos : 
+## Additional infos : 
 
 
-# How to structure the optimizations:
+### How to structure the optimizations:
 - Have it written like in the homeworks:  
   - Top of the files are the configs, macros, kernel computation, set notations – maybe in a separate file  
   - Then have separate functions for the baseline and each optimizations  
 
 
-# CPU INFOS (of the testing laptop)
+### CPU INFOS (of the testing laptop)
 | Parameter                                                                                   | Value                                             |
 |---------------------------------------------------------------------------------------------|---------------------------------------------------|
 | Processor manufacturer, name, number, microarchitecture                                     | Intel Core i5-1035G4, Ice Lake                    |
