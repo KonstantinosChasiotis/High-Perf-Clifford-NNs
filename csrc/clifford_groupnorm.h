@@ -1,12 +1,6 @@
 #ifndef CLIFFORD_GROUPNORM_H
 #define CLIFFORD_GROUPNORM_H
 
-/*
-TODO:
-      - change the benachmarks script to reflect the new implementaiton
-      - attempt a total timing data automation
-*/
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -17,7 +11,7 @@ TODO:
 #include <lapacke.h>
 #include "flops.h"
 
-void clifford_groupnorm( //wrapper around with memory allocation
+void clifford_groupnorm( //wrapper (if you want to understand how to benchmark)
     const float *x,
     int B,
     int C,

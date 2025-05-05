@@ -1,33 +1,5 @@
 #include "clifford_groupnorm.h"
 
-/*
-Assumption we run in training mode
-
-Base:
-    Adds: 2BCDI + BCDII + dim0*I + dim0(I^3)/6 + BCDI(I-1)/2 = BCDI(2 + I + (I-1)/2) + dim0I(1+II/6)
-    Mults: BCDII + dim0*I + dim0(I^3)/6 + BCDI(I-1)/2 = BCDI(I + (I-1)/2) + dim0I(1+II/6)
-    Divs: dim0*I + dim0*I*I + BCDI = dim0I(1+I) + BCDI
-    Total: BCDI(2 + 2I + I - 1 + 1) + dim0I(2 + II/3 + 1 + I) = BCDI(3I + 2) + dim0I(II/3 + I + 3)
-Running Mean:
-    Adds: 2dim0*I + 2dim0*I*I + I*group_size*B + I*I*group_size*B = 3dim0I(I+1)
-    Mults: dim0*I + dim0*I*I = dim0I(I+1)
-    Divs: I*group_size + I*I*group_size = IIC/num_groups
-Weight and Bias:
-    Adds: BCDII + BCDI = BCDI(1+I)
-    Mults: BCDII
-    Divs:
-
-
-Ideas for Optimization:
-- Less memory allocation
-- Avoid back transposition of X -> XT = x
-- Make sure BLAS/LAPCKE routines are very optimized
-- Note the expensive things often have I dimesntions, the only I dimension we need to support are 2,4,8... use super optimized verions for this?
-- On the back subsititution we could first norm the diagonal since we do backsub many vectors with one mat
-- Generally use vectorization (especially if we have the I dimension)
-*/
-
-
 void clifford_groupnorm( //wrapper around with memory allocation around clifford_groupnorm_temp
     const float *x,
     int B,
