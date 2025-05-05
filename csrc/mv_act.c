@@ -8,7 +8,7 @@
 // out:    [B][C][L][I]  (in-place overwrite is fine)
 void mv_act_forward(
     const float *x,
-    int B, int C, int L, int I,
+    int B, int C, int L, int _I,
     const float *weight,
     int K,
     const int *kernel_blades,
@@ -24,7 +24,7 @@ void mv_act_forward(
                     int blade = kernel_blades[k];
                     // x[b,c,p+k,blade]
                     float v = x[
-                        ((b * C + c) * L + (p + k)) * I
+                        ((b * C + c) * L + (p + k)) * _I
                         + blade
                     ];
                     acc += weight[c*K + k] * v;
@@ -34,13 +34,13 @@ void mv_act_forward(
 
                 
                 // now scale all blades at (b,c,p,*)
-                for (int i = 0; i < I; ++i) {
+                for (int i = 0; i < _I; ++i) {
                     float v = x[
-                        ((b * C + c) * L + p) * I
+                        ((b * C + c) * L + p) * _I
                         + i
                     ];
                     out[
-                        ((b * C + c) * L + p) * I
+                        ((b * C + c) * L + p) * _I
                         + i
                     ] = v * sig;
                 }
