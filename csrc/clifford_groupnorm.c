@@ -175,28 +175,28 @@ void clifford_groupnorm_alloctemp(
     *running_cov_temp = NULL;
     if (running){
         size_t running_mean_size = _I * dim0;
-        *running_mean_temp = calloc(running_mean_size, sizeof(float));
+        *running_mean_temp = malloc(running_mean_size * sizeof(float));
         size_t running_cov_size = _I* _I * dim0;
-        *running_cov_temp = calloc(running_cov_size, sizeof(float));
+        *running_cov_temp = malloc(running_cov_size * sizeof(float));
     }
     *weight_temp = NULL;
     *bias_temp = NULL;
     *weight_perm_temp = NULL;
     if (scaling){
         size_t weight_size = _I* _I * dim0;
-        *weight_temp = calloc(weight_size, sizeof(float));
+        *weight_temp = malloc(weight_size * sizeof(float));
         size_t bias_size = _I * dim0;
-        *bias_temp = calloc(bias_size, sizeof(float));
-        *weight_perm_temp = calloc(weight_size, sizeof(float));
+        *bias_temp = malloc(bias_size * sizeof(float));
+        *weight_perm_temp = malloc(weight_size * sizeof(float));
     }
     size_t x_size = dim0 * num_groups * D * _I;
-    *X_temp = calloc(x_size, sizeof(float));
+    *X_temp = malloc(x_size * sizeof(float));
     size_t mean_size = dim0 * _I;
-    *mean_temp = calloc(mean_size, sizeof(float));
+    *mean_temp = malloc(mean_size * sizeof(float));
     size_t cov_size = dim0*_I*_I;
-    *cov_temp = calloc(cov_size, sizeof(float));
+    *cov_temp = malloc(cov_size * sizeof(float));
     size_t max_size = dim0;
-    *max_temp = calloc(max_size, sizeof(float));
+    *max_temp = malloc(max_size * sizeof(float));
     return;
 }
 
@@ -285,6 +285,10 @@ void clifford_groupnorm_part0(
 
     //mean
     if (training || (!running)) {
+        int mean_size = dim0 * _I;
+        for (int i = 0; i < mean_size; i++){
+            mean_temp[i] = 0.0f;
+        }
         for(int i = 0; i < dim0; i++){
             for(int j = 0; j < num_groups; j++){
                 for(int k = 0; k < D; k++){
@@ -343,6 +347,10 @@ void clifford_groupnorm_part0(
 
     //calc cov
     if (training || (!running)){
+        int cov_size = dim0*_I*_I;
+        for (int i = 0; i < cov_size; i++){
+            cov_temp[i] = 0.0f;
+        }
         for(int i = 0; i < dim0; i++){
             for(int j = 0; j < _I; j++){ //row selector
                 for(int l = 0; l < _I; l++){ //col selector
@@ -352,7 +360,6 @@ void clifford_groupnorm_part0(
                         cov_temp[i*_I*_I + j*_I + l] += X_temp[i*_I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*_I + k*_I + l];
         }}}}
         //scale all of cov
-        size_t cov_size = dim0*_I*_I;
         for(int i = 0; i < cov_size; i++){
             FLOP_DIV(1);
             cov_temp[i] /= (num_groups * D);
