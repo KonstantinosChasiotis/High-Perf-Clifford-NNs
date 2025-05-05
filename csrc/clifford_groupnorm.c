@@ -26,7 +26,9 @@ Ideas for Optimization:
 - On the back subsititution we could first norm the diagonal since we do backsub many vectors with one mat
 - Generally use vectorization (especially if we have the I dimension)
 */
-void clifford_groupnorm_notemp( //wrapper around with memory allocation around clifford_groupnorm_temp
+
+
+void clifford_groupnorm( //wrapper around with memory allocation around clifford_groupnorm_temp
     const float *x,
     int B,
     int C,
@@ -43,113 +45,34 @@ void clifford_groupnorm_notemp( //wrapper around with memory allocation around c
     float momentum,
     float eps,
     float *x_norm){
-
-    //basic constants
-    int dim0 = (B*C)/num_groups;
-    int group_size = C/num_groups;
-
-    //allocate temp memory (zeroed!!!)
+    
     float * running_mean_temp = NULL;
     float * running_cov_temp = NULL;
-    if (running){
-        size_t running_mean_size = _I * dim0;
-        running_mean_temp = calloc(running_mean_size, sizeof(float));
-        size_t running_cov_size = _I* _I * dim0;
-        running_cov_temp = calloc(running_cov_size, sizeof(float));
-    }
-    float *weight_temp = NULL;
-    float *bias_temp = NULL;
-    float *weight_perm_temp = NULL;
-    if (scaling){
-        size_t weight_size = _I* _I * dim0;
-        weight_temp = calloc(weight_size, sizeof(float));
-        size_t bias_size = _I * dim0;
-        bias_temp = calloc(bias_size, sizeof(float));
-        weight_perm_temp = calloc(weight_size, sizeof(float));
-    }
-    size_t x_size = dim0 * num_groups * D * _I;
-    float * X_temp = calloc(x_size, sizeof(float));
-    size_t mean_size = dim0 * _I;
-    float * mean_temp = calloc(mean_size, sizeof(float));
-    size_t cov_size = dim0*_I*_I;
-    float * cov_temp = calloc(cov_size, sizeof(float));
-    size_t max_size = dim0;
-    float * max_temp = calloc(max_size, sizeof(float));
+    float * weight_temp = NULL;
+    float * bias_temp = NULL;
+    float * weight_perm_temp = NULL;
+    float * X_temp = NULL;
+    float * mean_temp = NULL;
+    float * cov_temp = NULL;
+    float * max_temp = NULL;
 
-
-    //compute
-    clifford_groupnorm_temp(
-        x,
+    clifford_groupnorm_alloctemp(
         B,
         C,
         D,
         _I,
         num_groups,
         running,
-        running_mean_orig,
-        running_mean_temp,
-        running_cov_orig,
-        running_cov_temp,
+        &running_mean_temp,
+        &running_cov_temp,
         scaling,
-        weight_orig,
-        weight_temp,
-        weight_perm_temp,
-        bias_orig,
-        bias_temp,
-        mean_temp,
-        X_temp,
-        cov_temp,
-        max_temp,
-        training,
-        momentum,
-        eps,
-        x_norm);
-
-
-    //free temp memory
-    if (running){
-        free(running_mean_temp);
-        free(running_cov_temp);
-    }
-    if (scaling){
-        free(weight_temp);
-        free(bias_temp);
-        free(weight_perm_temp);
-    }
-    //free all the temp arrays
-    free(max_temp);
-    free(cov_temp);
-    free(X_temp);
-    free(mean_temp);
-    return;
-}
-
-void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, clifford_groupnorm_lapacke, clifford_groupnorm_part1
-    const float *x,
-    int B,
-    int C,
-    int D,
-    int _I,
-    int num_groups,
-    bool running,
-    float *running_mean_orig,
-    float *running_mean_temp,
-    float *running_cov_orig,
-    float *running_cov_temp,
-    bool scaling,
-    const float *weight_orig,
-    float *weight_temp,
-    float *weight_perm_temp,
-    const float *bias_orig,
-    float *bias_temp,
-    float *mean_temp,
-    float *X_temp,
-    float *cov_temp,
-    float *max_temp,
-    bool training,
-    float momentum,
-    float eps,
-    float *x_norm){
+        &weight_temp,
+        &weight_perm_temp,
+        &bias_temp,
+        &mean_temp,
+        &X_temp,
+        &cov_temp,
+        &max_temp);
 
     FLOPS_RESET();
 
@@ -201,13 +124,119 @@ void clifford_groupnorm_temp( //wrapper around clifford_groupnorm_part0, cliffor
         momentum,
         eps,
         x_norm);
-    
 
     FLOPS_READOUT();
 
+    clifford_groupnorm_freetemp(
+        B,
+        C,
+        D,
+        _I,
+        num_groups,
+        running,
+        &running_mean_temp,
+        &running_cov_temp,
+        scaling,
+        &weight_temp,
+        &weight_perm_temp,
+        &bias_temp,
+        &mean_temp,
+        &X_temp,
+        &cov_temp,
+        &max_temp);
+        
     return;
+}
+
+void clifford_groupnorm_alloctemp(
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    float **running_mean_temp,
+    float **running_cov_temp,
+    bool scaling,
+    float **weight_temp,
+    float **weight_perm_temp,
+    float **bias_temp,
+    float **mean_temp,
+    float **X_temp,
+    float **cov_temp,
+    float **max_temp){
+
+    //basic constants
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+
+    //allocate temp memory (zeroed!!!)
+    *running_mean_temp = NULL;
+    *running_cov_temp = NULL;
+    if (running){
+        size_t running_mean_size = _I * dim0;
+        *running_mean_temp = calloc(running_mean_size, sizeof(float));
+        size_t running_cov_size = _I* _I * dim0;
+        *running_cov_temp = calloc(running_cov_size, sizeof(float));
     }
+    *weight_temp = NULL;
+    *bias_temp = NULL;
+    *weight_perm_temp = NULL;
+    if (scaling){
+        size_t weight_size = _I* _I * dim0;
+        *weight_temp = calloc(weight_size, sizeof(float));
+        size_t bias_size = _I * dim0;
+        *bias_temp = calloc(bias_size, sizeof(float));
+        *weight_perm_temp = calloc(weight_size, sizeof(float));
+    }
+    size_t x_size = dim0 * num_groups * D * _I;
+    *X_temp = calloc(x_size, sizeof(float));
+    size_t mean_size = dim0 * _I;
+    *mean_temp = calloc(mean_size, sizeof(float));
+    size_t cov_size = dim0*_I*_I;
+    *cov_temp = calloc(cov_size, sizeof(float));
+    size_t max_size = dim0;
+    *max_temp = calloc(max_size, sizeof(float));
+    return;
+}
+
+void clifford_groupnorm_freetemp(
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    float **running_mean_temp,
+    float **running_cov_temp,
+    bool scaling,
+    float **weight_temp,
+    float **weight_perm_temp,
+    float **bias_temp,
+    float **mean_temp,
+    float **X_temp,
+    float **cov_temp,
+    float **max_temp){
+
+    if (running){
+        free(*running_mean_temp);
+        free(*running_cov_temp);
+    }
+
+    if (scaling){
+        free(*weight_temp);
+        free(*bias_temp);
+        free(*weight_perm_temp);
+    }
+
+    //free all the temp arrays
+    free(*max_temp);
+    free(*cov_temp);
+    free(*X_temp);
+    free(*mean_temp);
     
+    return;
+}   
 
 void clifford_groupnorm_part0(
     const float *x,
