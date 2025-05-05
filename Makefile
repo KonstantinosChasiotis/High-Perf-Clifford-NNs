@@ -1,9 +1,12 @@
 # Makefile
 
+# Homebrew OpenBLAS path (update if your brew prefix is different)
+OPENBLAS_PREFIX := /usr/local/opt/openblas
+
 # Compiler and flags
 CC       := gcc
-CFLAGS   := -O3 -fPIC -Wno-alloc-size-larger-than
-LDFLAGS  := -shared -llapacke -lopenblas
+CFLAGS   := -O3 -fPIC -Wno-alloc-size-larger-than -I$(OPENBLAS_PREFIX)/include
+LDFLAGS  := -shared -lopenblas -L$(OPENBLAS_PREFIX)/lib
 
 # Library suffix based on OS
 SO_SUFFIX := .so
@@ -36,4 +39,5 @@ clean:
 	rm -rf $(LIBDIR)
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	rm -rf .pytest_cache
+
 
