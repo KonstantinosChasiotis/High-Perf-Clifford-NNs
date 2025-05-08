@@ -9,7 +9,6 @@
 #include <math.h>
 #include <cblas.h>
 #include <lapacke.h>
-#include "flops.h"
 
 void clifford_groupnorm( //wrapper (if you want to understand how to benchmark groupnorm, read this definition)
     const float *x,

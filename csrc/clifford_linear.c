@@ -1,6 +1,8 @@
 #include "clifford_linear.h"
 #include <string.h>
 #include <math.h>
+#include "flops.h"
+
 
 /*
 * Kernel generators: Each allocates a float array of shape
@@ -60,6 +62,7 @@ static void get_1d_clifford_kernel(
             // Determine the coefficients of the linear combinations of the weights and the metric that give us a scalar output => y0 = w0*x0 + g0*w1*x1 
             K[(0 * out_ch + oc) * cols + (0 * in_ch + ic)] = w_scalar;    
             K[(0 * out_ch + oc) * cols + (1 * in_ch + ic)] = g0 * w_vector; 
+            FLOP(1);
 
             // Determine the coefficients of the linear combinations of the weights and the metric that give us a vector output => y1 = w1*x0 + w0*x1
             K[(1 * out_ch + oc) * cols + (0 * in_ch + ic)] = w_vector;     
@@ -115,17 +118,20 @@ static void get_2d_clifford_kernel(
             K[(0 * out_ch + oc) * cols + (1 * in_ch + ic)] = g0 * w1;
             K[(0 * out_ch + oc) * cols + (2 * in_ch + ic)] = g1 * w2;
             K[(0 * out_ch + oc) * cols + (3 * in_ch + ic)] = -g0 * g1 * w3;
+            FLOP(4); //is negation a flop??
 
             
             K[(1 * out_ch + oc) * cols + (0 * in_ch + ic)] = w1;
             K[(1 * out_ch + oc) * cols + (1 * in_ch + ic)] = w0;
             K[(1 * out_ch + oc) * cols + (2 * in_ch + ic)] = -g1 * w3;
             K[(1 * out_ch + oc) * cols + (3 * in_ch + ic)] = g1 * w2;
+            FLOP(2);
 
             K[(2 * out_ch + oc) * cols + (0 * in_ch + ic)] = w2;
             K[(2 * out_ch + oc) * cols + (1 * in_ch + ic)] = g0 * w3;
             K[(2 * out_ch + oc) * cols + (2 * in_ch + ic)] = w0;
             K[(2 * out_ch + oc) * cols + (3 * in_ch + ic)] = -g0 * w1;
+            FLOP(2);
 
             K[(3 * out_ch + oc) * cols + (0 * in_ch + ic)] = w3;
             K[(3 * out_ch + oc) * cols + (1 * in_ch + ic)] = w2;
@@ -197,6 +203,7 @@ static void get_3d_clifford_kernel(
             K[(0*out_ch+oc)*cols + (5*in_ch+ic)] = -g0*g2 * w5;
             K[(0*out_ch+oc)*cols + (6*in_ch+ic)] = -g1*g2 * w6;
             K[(0*out_ch+oc)*cols + (7*in_ch+ic)] = -g0*g1*g2 * w7;
+            FLOP(12);
 
             K[(1*out_ch+oc)*cols + (0*in_ch+ic)] = w1;
             K[(1*out_ch+oc)*cols + (1*in_ch+ic)] = w0;
@@ -206,6 +213,7 @@ static void get_3d_clifford_kernel(
             K[(1*out_ch+oc)*cols + (5*in_ch+ic)] = w3 * g2;
             K[(1*out_ch+oc)*cols + (6*in_ch+ic)] = -g1*g2 * w7;
             K[(1*out_ch+oc)*cols + (7*in_ch+ic)] = -g1*g2 * w6;
+            FLOP(8);
 
             K[(2*out_ch+oc)*cols + (0*in_ch+ic)] = w2;
             K[(2*out_ch+oc)*cols + (1*in_ch+ic)] = g0 * w4;
@@ -215,6 +223,7 @@ static void get_3d_clifford_kernel(
             K[(2*out_ch+oc)*cols + (5*in_ch+ic)] = w7 * g0*g2;
             K[(2*out_ch+oc)*cols + (6*in_ch+ic)] = w3 * g2;
             K[(2*out_ch+oc)*cols + (7*in_ch+ic)] = w5 * g0*g2;
+            FLOP(8);
 
             K[(3*out_ch+oc)*cols + (0*in_ch+ic)] = w3;
             K[(3*out_ch+oc)*cols + (1*in_ch+ic)] = g0 * w5;
@@ -224,6 +233,7 @@ static void get_3d_clifford_kernel(
             K[(3*out_ch+oc)*cols + (5*in_ch+ic)] = -g0 * w1;
             K[(3*out_ch+oc)*cols + (6*in_ch+ic)] = -g1 * w2;
             K[(3*out_ch+oc)*cols + (7*in_ch+ic)] = -g0*g1 * w4;
+            FLOP(8);
 
             K[(4*out_ch+oc)*cols + (0*in_ch+ic)] = w4;
             K[(4*out_ch+oc)*cols + (1*in_ch+ic)] = w2;
@@ -233,6 +243,7 @@ static void get_3d_clifford_kernel(
             K[(4*out_ch+oc)*cols + (5*in_ch+ic)] = -g2 * w6;
             K[(4*out_ch+oc)*cols + (6*in_ch+ic)] = g2 * w5;
             K[(4*out_ch+oc)*cols + (7*in_ch+ic)] = g2 * w3;
+            FLOP(4);
 
             K[(5*out_ch+oc)*cols + (0*in_ch+ic)] = w5;
             K[(5*out_ch+oc)*cols + (1*in_ch+ic)] = w3;
@@ -242,6 +253,7 @@ static void get_3d_clifford_kernel(
             K[(5*out_ch+oc)*cols + (5*in_ch+ic)] = w0;
             K[(5*out_ch+oc)*cols + (6*in_ch+ic)] = -g1 * w4;
             K[(5*out_ch+oc)*cols + (7*in_ch+ic)] = -g1 * w2;
+            FLOP(4);
 
             K[(6*out_ch+oc)*cols + (0*in_ch+ic)] = w6;
             K[(6*out_ch+oc)*cols + (1*in_ch+ic)] = g0 * w7;
@@ -251,6 +263,7 @@ static void get_3d_clifford_kernel(
             K[(6*out_ch+oc)*cols + (5*in_ch+ic)] = g0 * w4;
             K[(6*out_ch+oc)*cols + (6*in_ch+ic)] = w0;
             K[(6*out_ch+oc)*cols + (7*in_ch+ic)] = g0 * w1;
+            FLOP(4);
 
             K[(7*out_ch+oc)*cols + (0*in_ch+ic)] = w7;
             K[(7*out_ch+oc)*cols + (1*in_ch+ic)] = w6;
@@ -369,9 +382,11 @@ void clifford_linear_forward(
             for (int d = 0; d < d_flat; d++)
             {
                 acc += K[r * d_flat + d] * x_f[b * d_flat + d];
+                FLOP(2);
             }
             if (L->bias)
             {
+                FLOP(1);
                 acc += L->bias[r];
             }
             y_f[b * n_flat + r] = acc;

@@ -15,18 +15,26 @@ endif
 CSRCDIR    := csrc
 LIBDIR     := $(CSRCDIR)/build
 
-# Find all C source files
+# src and targets
 CSRCS      := $(wildcard $(CSRCDIR)/*.c)
 TARGET_LIBS := $(patsubst $(CSRCDIR)/%.c,$(LIBDIR)/lib%$(SO_SUFFIX),$(CSRCS))
+TARGET_LIBSFLOPS := $(patsubst $(CSRCDIR)/%.c,$(LIBDIR)/libflops%$(SO_SUFFIX),$(CSRCS))
 
-.PHONY: all test clean
+.PHONY: all
 
-# Default target: Build all libraries
-all: $(TARGET_LIBS)
+all: libs
 
+libs: lib libflops
+
+lib: $(TARGET_LIBS)
 $(LIBDIR)/lib%$(SO_SUFFIX): $(CSRCDIR)/%.c | $(LIBDIR)
 	@echo "Building C shared library → $@"
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -UTRACEFLOPS $(LDFLAGS) -o $@ $<
+
+libflops: $(TARGET_LIBSFLOPS)
+$(LIBDIR)/libflops%$(SO_SUFFIX): $(CSRCDIR)/%.c | $(LIBDIR)
+	@echo "Building C shared library → $@"
+	$(CC) $(CFLAGS) -DTRACEFLOPS $(LDFLAGS) -o $@ $<
 
 $(LIBDIR):
 	mkdir -p $(LIBDIR)

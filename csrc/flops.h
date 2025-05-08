@@ -1,14 +1,24 @@
 
-#ifndef FLOPS_H_
-#define FLOPS_H_
+#ifndef FLOPS_H
+#define FLOPS_H
 
-#define TRACEFLOPS 0
+#ifdef TRACEFLOPS
+#include <stdio.h>
+#include <stdint.h>
 
-unsigned long flops_add, flops_mult, flops_div;
-#define FLOPS_RESET(folps) ((void) ((TRACEFLOPS) ? flops_add = flops_mult = flops_div = 0 : 0))
-#define FLOP_ADD(folps) ((void) ((TRACEFLOPS) ? flops_add += folps : 0))
-#define FLOP_MULT(folps) ((void) ((TRACEFLOPS) ? flops_mult += folps : 0))
-#define FLOP_DIV(folps) ((void) ((TRACEFLOPS) ? flops_div += folps : 0))
-#define FLOPS_READOUT() ((void) ((TRACEFLOPS) ? printf("FLOPS: \nADD , MULT , DIV, TOTAL \n%ld , %ld , %ld, %ld \n", flops_add, flops_mult, flops_div, flops_add + flops_mult + flops_div) : 0))
+static uint64_t total_flops = 0; //static so is is only consideder in the compilation entity
 
-#endif //FLOPS_H_
+#define FLOP(n) total_flops += (uint64_t)(n)
+
+static inline void flops_readout() {
+    printf("FLOPS: %lu\n", total_flops);
+}
+
+#else
+
+#define FLOP(n)
+#define flops_readout()
+
+#endif
+
+#endif //FLOPS_H
