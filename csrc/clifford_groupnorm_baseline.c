@@ -1,4 +1,5 @@
 #include "clifford_groupnorm.h"
+#define FLOPPATH "benchmarks/flops/groupnorm_baseline_flops.csv"
 #include "flops.h"
 
 void clifford_groupnorm( //wrapper around with memory allocation around clifford_groupnorm_temp
@@ -96,7 +97,7 @@ void clifford_groupnorm( //wrapper around with memory allocation around clifford
         eps,
         x_norm);
 
-    flops_readout();
+    flops_readout(B);
 
     clifford_groupnorm_freetemp(
         B,

@@ -8,13 +8,8 @@ import torch
 import torch.nn as nn
 from typing import Optional, Union
 
-# Pick the right shared‐lib name
-_lib_name = "clifford_groupnorm.dll" if sys.platform == "win32" else "libclifford_groupnorm.so"
-# We assume you built it into csrc/build/
-_lib_path = os.path.join(os.path.dirname(__file__), "..", "csrc", "build", _lib_name)
-_lib = ctypes.CDLL(_lib_path)
-
 def c_clifford_group_norm(
+    lib_version: str,
     x: torch.Tensor,            # (B, C, *D, I)
     n_blades: int,              # = I
     num_groups: int,  
@@ -26,6 +21,12 @@ def c_clifford_group_norm(
     momentum: float = 0.1,
     eps: float = 1e-05,    
 ) -> torch.Tensor:
+    
+    # Pick the right shared‐lib name
+    _lib_name = f"libclifford_groupnorm_{lib_version}.dll" if sys.platform == "win32" else f"libclifford_groupnorm_{lib_version}.so"
+    # We assume you built it into csrc/build/
+    _lib_path = os.path.join(os.path.dirname(__file__), "..", "csrc", "build", _lib_name)
+    _lib = ctypes.CDLL(_lib_path)
     
     #assert that arguments are consistent
     assert (running_mean is None and running_cov is None) or (running_mean is not None and running_cov is not None)
