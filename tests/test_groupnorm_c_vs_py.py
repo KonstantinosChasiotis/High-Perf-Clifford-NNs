@@ -24,7 +24,10 @@ from cliffordlayers.wrapper_groupnorm   import c_clifford_group_norm
 @pytest.mark.parametrize("scaling", [
     False, True
 ])
-def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling):
+@pytest.mark.parametrize("version", [
+    "baseline", "invertdiag"
+])
+def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling, version):
 
     I = CliffordSignature(g).n_blades
     eps = 1e-5
@@ -61,6 +64,7 @@ def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling):
         )
 
     x_norm_c = c_clifford_group_norm(
+        version,
         x,
         I,
         num_groups=num_groups,
