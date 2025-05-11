@@ -1,50 +1,92 @@
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 #include "mv_act.h"
 
-// x:      [B][C][L][I]
-// weight: [C][K]
-// kernel_blades: length K, indices into the blade‐dimension I
-// out:    [B][C][L][I]  (in-place overwrite is fine)
+/**
+ * Multivector activation (linear) across blade dimension:
+ * 
+ * SO WHAT WE ARE ESSENTIALLY DOING : 
+ *   out[b,c,p,i] = x[b,c,p,i] * sigmoid(
+ *       sum_{k=0..K-1} weight[c*K + k] * x[b,c,p, kernel_blades[k]]
+ *   )
+ * 
+ * WE DID NOT INCLUDE THE BIAS, MAYBE FUTURE WORK 
+ * 
+ *
+ * Todo : need to update that we also need the input_blades 
+ * Parameters:
+ *   x               - input data [B][C][L][I]
+ *   B, C, L, I      - batch size, channels,length,num blades
+ *   weight          - conv weight [C][K]
+ *   K               - number of kernel blades
+ *   kernel_blades   - blade indices [K]
+ *   out             - output buffer [B][C][L][I]
+ */
+
+
 void mv_act_forward(
     const float *x,
-    int B, int C, int L, int I,
-    const float *weight,    // shape (C, K)
+    int B,
+    int C,
+    int I_in,
+    int I_full,
+    const int *input_blades,
+    const float *weight,
     int K,
     const int *kernel_blades,
     float *out
 ) {
-    // for each sample, channel, position, blade
+    // 1) Allocate + zero a [B*C*I_full] buffer for the embedded multivector
+    size_t Vsize = (size_t)B * C * I_full;
+    float *v = (float*)malloc(Vsize * sizeof(float));
+    memset(v, 0, Vsize * sizeof(float));
+
+    //2) EMBED: scatter each x[b,c,i] → v[b,c, input_blades[i]]
     for (int b = 0; b < B; ++b) {
-        for (int c = 0; c < C; ++c) {
-            for (int p = 0; p < L; ++p) {
-                // compute the 1D depthwise convolution at (b,c,p), zero-padding beyond L
-                float acc = 0.0f;
-                for (int k = 0; k < K; ++k) {
-                    int idx = p + k;
-                    if (idx < L) {
-                        int blade = kernel_blades[k];
-                        // x[b, c, idx, blade]
-                        float v = x[
-                            ((b * C + c) * L + idx) * I
-                            + blade
-                        ];
-                        acc += weight[c * K + k] * v;
-                    }
-                    // else treat x as zero
-                }
-
-                // sigmoid activation
-                float sig = 1.0f / (1.0f + expf(-acc));
-
-                // now scale all blades at (b,c,p,*)
-                int base = ((b * C + c) * L + p) * I;
-                for (int i = 0; i < I; ++i) {
-                    float v = x[base + i];
-                    out[base + i] = v * sig;
-                }
-            }
+      for (int c = 0; c < C; ++c) {
+        size_t xc = (size_t)b*C*I_in + c*I_in;
+        size_t vc = (size_t)b*C*I_full + c*I_full;
+        for (int i = 0; i < I_in; ++i) {
+          int blade = input_blades[i];
+          v[vc + blade] = x[xc + i];
         }
+      }
     }
-}
 
+    //3) CONV+SIGMOID activation: we assign one gate per (b,c)
+    float *gate = (float*)malloc((size_t)B * C * sizeof(float));
+    for (int b = 0; b < B; ++b) {
+      for (int c = 0; c < C; ++c) {
+        float acc = 0.0f;
+        const float *w = weight + (size_t)c * K;
+        size_t vc = (size_t)b*C*I_full + c*I_full;
+        for (int k = 0; k < K; ++k) {
+          int blade = kernel_blades[k];
+          if (blade >= 0 && blade < I_full) {
+            acc += w[k] * v[vc + blade];
+          }
+        }
+        gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
+      }
+    }
+
+    // 4)GET: for each (b,c), multiply each embedded slot by its gate
+    //then gather back the I_in input_blade slots into out[b,c,i]
+    for (int b = 0; b < B; ++b) {
+      for (int c = 0; c < C; ++c) {
+        float g = gate[b*C + c];
+        size_t vc = (size_t)b*C*I_full + c*I_full;
+        size_t xo = (size_t)b*C*I_in  + c*I_in;
+        for (int i = 0; i < I_in; ++i) {
+          int blade = input_blades[i];
+          float val = v[vc + blade] * g;
+          out[xo + i] = val;
+        }
+      }
+    }
+
+    free(gate);
+    free(v);
+}
