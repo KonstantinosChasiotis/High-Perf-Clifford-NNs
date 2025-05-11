@@ -2,14 +2,21 @@
 
 ## 📝 To-Dos
 
-### For this week:
-- [ ] Make sure the baseline is fully working  
+### WEEK 05.05 - 11.05:
+- [X] Make sure the baseline is fully working  
 - [X] Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
 - [X] Test files: Input / output comparison  
 - [X] For linear layer: 15 tests cases; should maybe have more test cases (groupnorm has 80)  
 - [X] For Clifford algebra nonlinearities: Will extend after baseline passes the initial test  
-- [ ] For groupnorm: others should review, but for now test every feature (just not the rolling mean)  
 - **Important:** when we have a working version, merge it into `master`  
+
+### WEEK 12.05 - 18.05:
+- [ ] Mikke: implement the bias for the activation layer 
+- [ ] Kons: add the sigmoid to the pipeline 
+- [ ] Kons: try to start optimisation on the linear layer 
+- [ ] Simon: try to include the decomposition 
+- [ ] Arnie: Roofline plot 
+- [ ] Simon: trying potential optimization 
 
 ---
 
@@ -54,7 +61,6 @@
 - [ ] Determine the different perspective to compare:  
   - Py VS C baseline  
   - C baseline VS other optimizations  
-- [ ] FLOPS: See implementation with macros to count the flops and COMPARE it with the current counters (Mikke needs to push the `instruction.h` file)  
 - [ ] CYCLE COUNTER: adapted; output format should be automated  
   - For groupnorm: extra init because 2 different timing (because the nice imports that don’t work for everyone 🙂)  
 - [ ] PLOTS: write plotting scripts  
