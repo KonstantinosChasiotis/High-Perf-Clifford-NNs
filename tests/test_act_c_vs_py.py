@@ -1,5 +1,6 @@
 # tests/test_act_c_vs_py.py
 import itertools
+import pytest
 
 import numpy as np
 import torch
