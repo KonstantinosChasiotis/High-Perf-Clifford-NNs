@@ -121,7 +121,6 @@ class PGAConjugateLinear(nn.Module):
         x = self.algebra.get(x, self.input_blades)
 
         return x
-
 ###THIS SEEMS LIKE THE ONE FOR II 
 class MultiVectorAct(nn.Module):
     """
@@ -147,9 +146,11 @@ class MultiVectorAct(nn.Module):
         ##THEY WROTE LINEAR UNITS - SO I GUESS ONLY HERE 
         if agg == "linear":
             self.conv = nn.Conv1d(channels, channels, kernel_size=len(self.kernel_blades), groups=channels)
+
         self.agg = agg
 
     def forward(self, input):
+
         v = self.algebra.embed(input, self.input_blades)
         if self.agg == "linear":
             v = v * torch.sigmoid(self.conv(v[..., self.kernel_blades]))
@@ -161,7 +162,7 @@ class MultiVectorAct(nn.Module):
             raise ValueError(f"Aggregation {self.agg} not implemented.")
         v = self.algebra.get(v, self.input_blades)
         return v
-
+    
 
 class _CliffordG3ConvNd(nn.Module):
     """
