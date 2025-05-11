@@ -4,12 +4,12 @@
 
 ### For this week:
 - [ ] Make sure the baseline is fully working  
-- [ ] Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
-- [ ] Test files: Input / output comparison  
-- [ ] For linear layer: 15 tests cases; should maybe have more test cases (groupnorm has 80)  
-- [ ] For Clifford algebra nonlinearities: Will extend after baseline passes the initial test  
+- [X] Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
+- [X] Test files: Input / output comparison  
+- [X] For linear layer: 15 tests cases; should maybe have more test cases (groupnorm has 80)  
+- [X] For Clifford algebra nonlinearities: Will extend after baseline passes the initial test  
 - [ ] For groupnorm: others should review, but for now test every feature (just not the rolling mean)  
-- [ ] **Important:** when we have a working version, merge it into `master`  
+- **Important:** when we have a working version, merge it into `master`  
 
 ---
 
@@ -66,10 +66,10 @@
 ---
 
 ### Project server section update:
-- [ ] 1. Project description
-- [ ] 2. Existing implementation
-- [ ] 3. C-Straightforward
-- [ ] 4. Validation
+- [X] 1. Project description
+- [X] 2. Existing implementation
+- [X] 3. C-Straightforward
+- [X] 4. Validation
 - [ ] 5. Timing
 - [ ] 6. Cost analysis
 - [ ] 7. Performance plot
