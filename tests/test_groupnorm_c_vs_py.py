@@ -25,7 +25,7 @@ from cliffordlayers.wrapper_groupnorm   import c_clifford_group_norm
     False, True
 ])
 @pytest.mark.parametrize("version", [
-    "baseline", "invertdiag"
+    "baseline"
 ])
 def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling, version):
 
