@@ -25,6 +25,9 @@ By the next one-on-one meeting you should have performed all basic optimizations
 - [ ] Arnie: Roofline plot 
 - [ ] Simon: trying potential optimization for the batch norm layer 
 - [ ] Mikke: trying potential optimization for the activation layer 
+- FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
+- Use loop unrolling and accumulators  
+- Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
 
 ---
 
