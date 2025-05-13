@@ -450,7 +450,8 @@ void clifford_groupnorm_lapacke(
 
             if(x < 0){
                 printf("this shit aint pos def\n");
-                return;
+                //x = -x; //this will surely work, famous last words
+                //return;
             }
 
             x = sqrt(x);
