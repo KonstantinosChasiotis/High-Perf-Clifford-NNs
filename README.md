@@ -2,6 +2,13 @@
 
 ## 📝 To-Dos
 
+### NEXT ONE-ON-ONE MEETING 23.05.25 - 16:00 (hybrid) : 
+Requirements (mail from TA): 
+Please prepare 20-30 slides to present your optimizations, plots and analysis.
+
+By the next one-on-one meeting you should have performed all basic optimizations in addition to memory layout modifications to improve cache locality. Finalizing the AVX version is not mandatory at this point but if would be a plus. Also all this progress should be illustrated by performance plots, roofline, runtime… Gathering all the plots, analysis in a presentaatiuon would be appreciated.
+
+
 ### WEEK 05.05 - 11.05:
 - [X] Make sure the baseline is fully working  
 - [X] Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
@@ -11,12 +18,13 @@
 - **Important:** when we have a working version, merge it into `master`  
 
 ### WEEK 12.05 - 18.05:
-- [ ] Mikke: implement the bias for the activation layer 
+- [X] Mikke: implement the bias for the activation layer 
 - [ ] Kons: add the sigmoid to the pipeline 
 - [ ] Kons: try to start optimisation on the linear layer 
 - [ ] Simon: try to include the decomposition 
 - [ ] Arnie: Roofline plot 
-- [ ] Simon: trying potential optimization 
+- [ ] Simon: trying potential optimization for the batch norm layer 
+- [ ] Mikke: trying potential optimization for the activation layer 
 
 ---
 
@@ -33,7 +41,7 @@
 ---
 
 ### Layer – Geometric Clifford algebra nonlinearities (Mikke, Arnie)
-- [ ] Fails at certain test – so review the code (MIKKE)  
+- [X] Fails at certain test – so review the code (MIKKE)  
 - [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [ ] Use loop unrolling and accumulators  
 - [ ] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
