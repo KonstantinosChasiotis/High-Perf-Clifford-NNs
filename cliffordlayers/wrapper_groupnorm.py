@@ -73,7 +73,7 @@ def c_clifford_group_norm(
         bias_ptr = ctypes.c_void_p(0)
     
     # call into C
-    _lib.clifford_groupnorm_forward(
+    _lib.clifford_groupnorm(
         x.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
         ctypes.c_int(B),
         ctypes.c_int(C),
