@@ -9,7 +9,6 @@ import torch.nn as nn
 from typing import Optional, Union
 
 def c_clifford_group_norm(
-    lib_version: str,
     x: torch.Tensor,            # (B, C, *D, I)
     n_blades: int,              # = I
     num_groups: int,  
@@ -23,7 +22,7 @@ def c_clifford_group_norm(
 ) -> torch.Tensor:
     
     # Pick the right shared‐lib name
-    _lib_name = f"libclifford_groupnorm_{lib_version}.dll" if sys.platform == "win32" else f"libclifford_groupnorm_{lib_version}.so"
+    _lib_name = f"libclifford_groupnorm.dll" if sys.platform == "win32" else f"libclifford_groupnorm.so"
     # We assume you built it into csrc/build/
     _lib_path = os.path.join(os.path.dirname(__file__), "..", "csrc", "build", _lib_name)
     _lib = ctypes.CDLL(_lib_path)

@@ -24,10 +24,7 @@ from cliffordlayers.wrapper_groupnorm   import c_clifford_group_norm
 @pytest.mark.parametrize("scaling", [
     False, True
 ])
-@pytest.mark.parametrize("version", [
-    "baseline"
-])
-def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling, version):
+def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling):
 
     numerical_stability_iterations = 100
 
@@ -73,7 +70,6 @@ def test_groupnorm_c_matches_python(g, B, C, D, num_groups, running, scaling, ve
             )
 
         x_norm_c = c_clifford_group_norm(
-            version,
             x,
             I,
             num_groups=num_groups,
