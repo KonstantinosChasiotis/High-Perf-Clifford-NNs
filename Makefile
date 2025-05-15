@@ -2,8 +2,8 @@
 
 # Compiler and flags
 CC       := gcc
-CFLAGS   := -O3 -fPIC -Wno-alloc-size-larger-than
-LDFLAGS  := -shared -llapacke -lopenblas
+CFLAGS   := -O3 -fPIC -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations
+LDFLAGS  := -shared
 
 # Library suffix based on OS
 SO_SUFFIX := .so
