@@ -21,9 +21,9 @@ By the next one-on-one meeting you should have performed all basic optimizations
 - [X] Mikke: implement the bias for the activation layer 
 - [ ] Kons: add the sigmoid to the pipeline 
 - [ ] Kons: try to start optimisation on the linear layer 
-- [ ] Simon: try to include the decomposition 
+- [X] Simon: try to include the decomposition 
 - [ ] Arnie: Roofline plot 
-- [ ] Simon: trying potential optimization for the batch norm layer 
+- [X] Simon: trying potential optimization for the batch norm layer 
 - [ ] Mikke: trying potential optimization for the activation layer 
 - FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - Use loop unrolling and accumulators  
@@ -60,7 +60,7 @@ By the next one-on-one meeting you should have performed all basic optimizations
 - [ ] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
 - [ ] Don’t permute  
 - [ ] Note the expensive things often have I dimensions; the only I dimension we need to support are 2, 4 and 8 – maybe we could create super-optimized version for these input sizes  
-- [ ] On the back substitution we could first norm the diagonal since we do backsub many vectors with one mat (numerical stability might arise)  
+- [X] On the back substitution we could first norm the diagonal since we do backsub many vectors with one mat (numerical stability might arise)  
 - [ ] Generally use vectorization (especially if we have the I dimension)  
 - [ ] If LAPACKE and BLAS still give issues then include directly in the code base the different requirement – mail the TA to see if he also had this issue  
 
