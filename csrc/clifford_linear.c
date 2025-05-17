@@ -1,6 +1,7 @@
 #include "clifford_linear.h"
 #include <string.h>
 #include <math.h>
+#include "flops.h"
 
 /*
 * Kernel generators: Each allocates a float array of shape
@@ -369,9 +370,11 @@ void clifford_linear_forward(
             for (int d = 0; d < d_flat; d++)
             {
                 acc += K[r * d_flat + d] * x_f[b * d_flat + d];
+                FLOP(2);
             }
             if (L->bias)
             {
+                FLOP(1);
                 acc += L->bias[r];
             }
             y_f[b * n_flat + r] = acc;
