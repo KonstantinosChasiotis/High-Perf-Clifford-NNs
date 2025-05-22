@@ -2,7 +2,7 @@
 
 # Compiler and flags
 CC       := gcc
-CFLAGS   := -O3 -fPIC -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations
+CFLAGS   := -O3 -fPIC -mavx2 -mfma -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations
 LDFLAGS  := -shared
 
 # Library suffix based on OS
@@ -15,19 +15,19 @@ endif
 CSRCDIR    := csrc
 LIBDIR     := $(CSRCDIR)/build
 
-# Find all C source files
-CSRCS      := $(wildcard $(CSRCDIR)/*.c)
-TARGET_LIBS := $(patsubst $(CSRCDIR)/%.c,$(LIBDIR)/lib%$(SO_SUFFIX),$(CSRCS))
+# Targets
+.PHONY: all clean
+all: \
+  $(LIBDIR)/libclifford_groupnorm$(SO_SUFFIX) \
+  $(LIBDIR)/libclifford_linear$(SO_SUFFIX) \
+  $(LIBDIR)/libmv_act$(SO_SUFFIX)
 
-.PHONY: all test clean
-
-# Default target: Build all libraries
-all: $(TARGET_LIBS)
-
+# Build rule for each .c → .so
 $(LIBDIR)/lib%$(SO_SUFFIX): $(CSRCDIR)/%.c | $(LIBDIR)
 	@echo "Building C shared library → $@"
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
+# Ensure output directory exists
 $(LIBDIR):
 	mkdir -p $(LIBDIR)
 
@@ -36,5 +36,4 @@ clean:
 	rm -rf $(LIBDIR)
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	rm -rf .pytest_cache
-
 

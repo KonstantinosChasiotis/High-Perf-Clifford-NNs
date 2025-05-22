@@ -75,7 +75,7 @@ def test_bias_only_effect():
     x_torch = torch.randn(batch, channels, I_in)
     x_np     = x_torch.cpu().detach().numpy().astype(np.float32)
 
-    # build Python module with zero weights, random bias
+    #build Python module with zero weights, random bias
     mva_py = MultiVectorAct(
         channels=channels,
         algebra=algebra,
@@ -83,9 +83,9 @@ def test_bias_only_effect():
         agg="linear"
     )
     with torch.no_grad():
-        # zero-out all weights
+        #zero-out all weights
         mva_py.conv.weight.zero_()
-        # random bias
+        #random bias
         bias = torch.randn(channels)
         mva_py.conv.bias.copy_(bias)
 
@@ -106,7 +106,7 @@ def test_bias_only_effect():
         bias=bias_np
     )
 
-    # now check gate = sigmoid(bias), so out[b,c,i] = x[b,c,i]*gate[c]
+    #check gate = sigmoid(bias), so out[b,c,i] = x[b,c,i]*gate[c]
     gate = 1/(1 + np.exp(-bias_np))
     expected = x_np * gate[None,:,None]
 
