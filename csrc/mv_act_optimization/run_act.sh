@@ -6,6 +6,7 @@ gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function -DTRACEFLOPS \
     main.c \
     mv_act_bench.c mv_act_impls.c mv_act_setup.c \
     ../mv_act.c ../flops.c \
+    -lm \
     -o activation_benchmark
 echo "Compiled."
 
@@ -23,7 +24,7 @@ BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384)
 CSV=perfplot_activation.csv
 
 if [ "$MODE" = "0" ]; then
-  echo "Fixed‐input activation benchmark (batch=32)…"
+  echo "Fixed-input activation benchmark (batch=32)…"
   ./activation_benchmark 0 $C $I_IN $I_FULL $K 32
   exit 0
 fi
