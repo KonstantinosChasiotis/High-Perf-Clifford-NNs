@@ -2,6 +2,8 @@
 #define GNN_SETUP_H
 
 #include <stdbool.h>
+#include <math.h>
+
 
 extern int    gn_B, gn_C, gn_D, gn_I, gn_num_groups;
 extern bool   gn_running, gn_scaling, gn_training;
