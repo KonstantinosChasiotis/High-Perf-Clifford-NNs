@@ -7,7 +7,7 @@ gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function \
     main.c \
     gnn_bench.c gnn_impls.c gnn_setup.c \
     ../clifford_groupnorm.c ../flops.c \
-    -o groupnorm_benchmark
+    -o groupnorm_benchmark -lm
 echo "Compiled."
 
 if [ $# -lt 1 ]; then
