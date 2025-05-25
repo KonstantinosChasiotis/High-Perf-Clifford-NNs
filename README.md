@@ -159,15 +159,6 @@ TODO
 - [ ] Write project paper  
 
 
-## Additional infos : 
-
-### How to structure the optimizations:
-- Have it written like in the homeworks:  
-  - Top of the files are the configs, macros, kernel computation, set notations – maybe in a separate file  
-  - Then have separate functions for the baseline and each optimizations  
-
-
-
 ### Project Overview
 
 This repository provides a high-performance **Clifford Linear** layer implementation, combining a reference‐pure Python PyTorch module with a C‑accelerated backend. The goal is to build optimized C/C++ versions of key geometric algebra layers for efficient inference on x86_64 and ARM CPUs, while maintaining bit‑perfect compatibility with the Python implementation.
