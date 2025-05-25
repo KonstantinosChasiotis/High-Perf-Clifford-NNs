@@ -1,35 +1,85 @@
 # Team #75: High-Performance Clifford Layers in C
 
+### CPU INFOS (of the testing laptop)
+| Parameter                                                                                   | Value                                             |
+|---------------------------------------------------------------------------------------------|---------------------------------------------------|
+| Processor manufacturer, name, number, microarchitecture                                     | Intel Core i5-1035G4, Ice Lake                    |
+| CPU Base Frequency                                                                          | 1.10 GHz (nominal)                                |
+| CPU Maximum Frequency, Frequency Scaling support                                            | 3.70 GHz, supports Turbo Boost                    |
+| Phase in Intel’s development model                                                          | Tick (Ice Lake is a process shrink)               |
+
+
+## Installation
+
+```bash
+# create and activate env
+cd cliffordlayers
+conda env create --file docker/environment.yml
+conda activate cliffordlayers
+# Install all dependencies
+pip install -e .
+sudo apt install -y liblapacke-dev libopenblas-dev
+```
+
+## How to run tests
+
+```bash
+make
+pytest tests/test_linear_c_vs_py.py
+pytest tests/test_act_c_vs_py.py
+pytest tests/test_groupnorm_c_vs_py.py
+```
+
+## How to run benchmarking and plotting 
+
+```bash
+TODO
+```
+
+## How to run roofline plotting
+
+```bash
+TODO
+```
+
+
 ## 📝 To-Dos
 
-### NEXT ONE-ON-ONE MEETING 23.05.25 - 16:00 (hybrid) : 
-Requirements (mail from TA): 
-Please prepare 20-30 slides to present your optimizations, plots and analysis.
+### WEEK 25.05 - 31.05:
+- [ ] Arnie: Implement Roofline plot and correct plotting
+- [ ] Mikke, Kons: trying potential optimization for the activation layer 
+- [ ] Mikke: figue out AVX opt
+- [ ] Kons, Arnie: trying potential optimization for the linear layer  
+- [ ] Simon : trying potential optimization for the groupnorm layer  
 
-By the next one-on-one meeting you should have performed all basic optimizations in addition to memory layout modifications to improve cache locality. Finalizing the AVX version is not mandatory at this point but if would be a plus. Also all this progress should be illustrated by performance plots, roofline, runtime… Gathering all the plots, analysis in a presentaatiuon would be appreciated.
-
-
-### WEEK 05.05 - 11.05:
-- [X] Make sure the baseline is fully working  
-- [X] Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
-- [X] Test files: Input / output comparison  
-- [X] For linear layer: 15 tests cases; should maybe have more test cases (groupnorm has 80)  
-- [X] For Clifford algebra nonlinearities: Will extend after baseline passes the initial test  
-- **Important:** when we have a working version, merge it into `master`  
+### WEEK 19.05 - 25.05:
+- [X] All : Prepare presentation for meeting 20-30 slides
+- [X] Mikke: trying potential optimization for the activation layer 
+- [X] Kons, Arnie: trying potential optimization for the linear layer  
+- [X] Simon : trying potential optimization for the groupnorm layer  
+- [X] Mikke : give extra computer to kons 
+- [X] All : banchmark and plot their respective layer opt, + add flop count
 
 ### WEEK 12.05 - 18.05:
 - [X] Mikke: implement the bias for the activation layer 
-- [ ] Kons: add the sigmoid to the pipeline 
-- [ ] Kons: try to start optimisation on the linear layer 
+- [X] Kons: add the sigmoid to the pipeline 
 - [X] Simon: try to include the decomposition 
 - [X] Arnie: Implement basic Roofline plot (to improve further)
 - [X] Arnie: Improve performance plotting
 - [X] Arnie: Implement linear layer optimizations (K-Accumulators, FMA, AVX-2, no flatten/unflatten) (~8.6x max speed-up achieved)
 - [X] Simon: trying potential optimization for the batch norm layer 
-- [ ] Mikke: trying potential optimization for the activation layer 
+- [X] Mikke: trying potential optimization for the activation layer 
 - FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - Use loop unrolling and accumulators  
 - Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
+
+### WEEK 05.05 - 11.05:
+- [X] All :Make sure the baseline is fully working  
+- [X] Mikke : Wrapper files: good – maybe adapt to be able to test new optimizations/versions (maybe future work)  
+- [X] Mikke : Test files: Input / output comparison  
+- [X] Mikke : For linear layer: 15 tests cases; should maybe have more test cases (groupnorm has 80)  
+- [X] For Clifford algebra nonlinearities: Will extend after baseline passes the initial test  
+- **Important:** when we have a working version, merge it into `master`  
 
 ---
 
@@ -111,46 +161,11 @@ By the next one-on-one meeting you should have performed all basic optimizations
 
 ## Additional infos : 
 
-
 ### How to structure the optimizations:
 - Have it written like in the homeworks:  
   - Top of the files are the configs, macros, kernel computation, set notations – maybe in a separate file  
   - Then have separate functions for the baseline and each optimizations  
 
-
-### CPU INFOS (of the testing laptop)
-| Parameter                                                                                   | Value                                             |
-|---------------------------------------------------------------------------------------------|---------------------------------------------------|
-| Processor manufacturer, name, number, microarchitecture                                     | Intel Core i5-1035G4, Ice Lake                    |
-| CPU Base Frequency                                                                          | 1.10 GHz (nominal)                                |
-| CPU Maximum Frequency, Frequency Scaling support                                            | 3.70 GHz, supports Turbo Boost                    |
-| Phase in Intel’s development model                                                          | Tick (Ice Lake is a process shrink)               |
-
-
-
-## Installation
-
-```bash
-# create and activate env
-cd cliffordlayers
-conda env create --file docker/environment.yml
-conda activate cliffordlayers
-# Install all dependencies
-pip install -e .
-sudo apt install -y liblapacke-dev libopenblas-dev
-```
-
-## How to run tests
-
-```bash
-make
-pytest tests/test_linear_c_vs_py.py
-pytest tests/test_act_c_vs_py.py
-pytest tests/test_groupnorm_c_vs_py.py
-```
-
-## LAPCKE and BLAS installs used
-- On ubuntu: liblapacke-dev and libopenblas-dev
 
 
 ### Project Overview
