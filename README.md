@@ -22,7 +22,9 @@ By the next one-on-one meeting you should have performed all basic optimizations
 - [ ] Kons: add the sigmoid to the pipeline 
 - [ ] Kons: try to start optimisation on the linear layer 
 - [X] Simon: try to include the decomposition 
-- [ ] Arnie: Roofline plot 
+- [X] Arnie: Implement basic Roofline plot (to improve further)
+- [X] Arnie: Improve performance plotting
+- [X] Arnie: Implement linear layer optimizations (K-Accumulators, FMA, AVX-2, no flatten/unflatten) (~8.6x max speed-up achieved)
 - [X] Simon: trying potential optimization for the batch norm layer 
 - [ ] Mikke: trying potential optimization for the activation layer 
 - FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
@@ -31,19 +33,20 @@ By the next one-on-one meeting you should have performed all basic optimizations
 
 ---
 
-### Layer – Geometric Clifford algebra linear layers (Kons, Mikke)
-- [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
-- [ ] Use loop unrolling and accumulators  
-- [ ] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
+### Layer – Geometric Clifford algebra linear layers (Kons, Arnie)
+- [X] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  (ARNIE)
+- [X] Use loop unrolling and accumulators (ARNIE)
+- [X] Leverage SIMD instructions (AVX2)  (ARNIE)
 - [ ] Everywhere that use `malloc` (so sig init and destruct): remove it so it’s not in the performance measure  
-- [ ] Cache kernel **K** across passes – as we are doing inference  
-- [ ] Use BLAS to replace matrix-vector multiplication  
-- [ ] Potentially avoid flattening  
-- [ ] Look into Sparse Matrix-Vector multiplication  
+- [X] Cache kernel **K** across passes – as we are doing inference (KONS)
+- [X] ~~Use BLAS to replace matrix-vector multiplication~~ <- No, we'll need a specialize matrix multiplication fusing the kernels (ARNIE)
+- [X] Potentially avoid flattening -> tried this, however seems like bad cache accesses leads to degraded performance (~0.75x baseline) (ARNIE)
+- [ ] Implement specialized matrix-matrix multiplication by fusing kernel construction (remove kernel construction & redundant elements, try avoid flattening/unflattening) (ARNIE)
+- [ ] Look into Sparse Matrix-Vector multiplication 
 
 ---
 
-### Layer – Geometric Clifford algebra nonlinearities (Mikke, Arnie)
+### Layer – Geometric Clifford algebra nonlinearities (Mikke)
 - [X] Fails at certain test – so review the code (MIKKE)  
 - [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [ ] Use loop unrolling and accumulators  
@@ -76,9 +79,9 @@ By the next one-on-one meeting you should have performed all basic optimizations
   - For groupnorm: extra init because 2 different timing (because the nice imports that don’t work for everyone 🙂)  
 - [ ] PLOTS: write plotting scripts  
 - [ ] Performance: Kons already has  
-- [ ] Roffline: Arnie – take the CSV and do the plotting  
-- [ ] Need to consider the bytes transferred ?? for now assume some data is there  
-- [ ] Need to decide what’s in cache and what’s in memory  
+- [X] Roofline: Arnie – take the CSV and do the plotting  
+- [ ] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
+- [ ] Need to decide what’s in cache and what’s in memory ->  -> using special PAPI mem-access library
 
 ---
 
