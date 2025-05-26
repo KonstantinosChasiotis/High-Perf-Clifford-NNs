@@ -1,35 +1,40 @@
-
 #ifndef FLOPS_H
 #define FLOPS_H
 
+#include <stdint.h>
+
+// counts all FLOP(n) when FLOP_ENABLED is non-zero
+extern uint64_t total_flops;
+extern int      FLOP_ENABLED;
+
 #ifdef TRACEFLOPS
 #include <stdio.h>
-#include <stdint.h>
 
 #ifndef FLOPPATH
 #define FLOPPATH "flopslog.csv"
 #endif
 
-static uint64_t total_flops = 0; //static so is is only consideder in the compilation entity
+// only add to total_flops if enabled
+#define FLOP(n)                                          \
+  do {                                                   \
+    if (FLOP_ENABLED)                                    \
+      total_flops += (uint64_t)(n);                      \
+  } while (0)
 
-#define FLOP(n) total_flops += (uint64_t)(n)
-
-static inline void flops_readout(int B) {
-    FILE *fp = fopen(FLOPPATH, "a");
-
+static inline void flops_readout(FILE *fp, int B) {
     if (fp != NULL) {
-        fprintf(fp, "%d,%lu\n",B , total_flops);
-        fclose(fp);
+        fprintf(fp, "%d,%llu\n", B, (unsigned long long)total_flops);
     } else {
-        fprintf(stderr, "Error: Could not open file '%s' for writing flops.\n", FLOPPATH);
+        fprintf(stderr, "Error writing flops to file.\n");
     }
 }
 
 #else
 
-#define FLOP(n)
-#define flops_readout(B)
+// when TRACEFLOPS is off, FLOP does nothing
+#define FLOP(n)            ((void)0)
+#define flops_readout(fp,B) ((void)0)
 
-#endif
+#endif // TRACEFLOPS
 
-#endif //FLOPS_H
+#endif // FLOPS_H

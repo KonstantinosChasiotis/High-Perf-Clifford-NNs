@@ -2,8 +2,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <immintrin.h>
 #include "mv_act.h"
+#include "flops.h"
 
 /**
  * Multivector activation (linear) across blade dimension:
@@ -13,22 +13,20 @@
  *       sum_{k=0..K-1} weight[c*K + k] * x[b,c,p, kernel_blades[k]]
  *   )
  * 
+ * WE DID NOT INCLUDE THE BIAS, MAYBE FUTURE WORK 
  * 
  *
- * Todo : need to update that we also need the input_blades and bias
+ * Todo : need to update that we also need the input_blades 
  * Parameters:
  *   x               - input data [B][C][L][I]
  *   B, C, L, I      - batch size, channels,length,num blades
- *   I_full          - todo
- *   input_blades    - blades
  *   weight          - conv weight [C][K]
  *   K               - number of kernel blades
  *   kernel_blades   - blade indices [K]
  *   out             - output buffer [B][C][L][I]
- *   bias            - bias
  */
 
-void mv_act_forward_baseline(
+void mv_act_forward(
     const float *x,
     int           B,
     int           C,
@@ -64,14 +62,17 @@ void mv_act_forward_baseline(
       for (int c = 0; c < C; ++c) {
         float acc = bias[c];                   // start with bias
         const float *w = weight + (size_t)c * K;
+        FLOP(2);
         size_t vc = (size_t)b*C*I_full + c*I_full;
         for (int k = 0; k < K; ++k) {
           int blade = kernel_blades[k];
           if (blade >= 0 && blade < I_full) {
             acc += w[k] * v[vc + blade];
+            FLOP(2); // multiply + add
           }
         }
         gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
+        FLOP(4); // exp + divide
       }
     }
 
@@ -84,10 +85,11 @@ void mv_act_forward_baseline(
         for (int i = 0; i < I_in; ++i) {
           int blade = input_blades[i];
           out[xo + i] = v[vc + blade] * g;
+            FLOP(1); // multiply by gate
         }
       }
     }
+
     free(gate);
     free(v);
 }
-
