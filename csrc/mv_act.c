@@ -13,7 +13,6 @@
  *       sum_{k=0..K-1} weight[c*K + k] * x[b,c,p, kernel_blades[k]]
  *   )
  * 
- * WE DID NOT INCLUDE THE BIAS, MAYBE FUTURE WORK 
  * 
  *
  * Todo : need to update that we also need the input_blades 
@@ -23,6 +22,7 @@
  *   weight          - conv weight [C][K]
  *   K               - number of kernel blades
  *   kernel_blades   - blade indices [K]
+ *   bias            - bias
  *   out             - output buffer [B][C][L][I]
  */
 
