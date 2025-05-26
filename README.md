@@ -158,14 +158,6 @@ Plotting scripts expect:
 
 ---
 
-```
-
-## How to run roofline plotting
-
-```bash
-TODO
-```
-
 
 ## 📝 To-Dos
 
