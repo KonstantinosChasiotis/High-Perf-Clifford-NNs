@@ -30,10 +30,134 @@ pytest tests/test_act_c_vs_py.py
 pytest tests/test_groupnorm_c_vs_py.py
 ```
 
-## How to run benchmarking and plotting 
+## Clifford-ML Layer Benchmarking Pipeline
+
+This repository provides a small “harness+scripts” pipeline to:
+
+1. **Register** multiple implementations of a layer (baseline + optimized variants).  
+2. **Benchmark** them for both correctness and performance (cycles & FLOPs).  
+3. **Sweep** over batch sizes, emit CSV data, and produce plots.
+
+Three layers are supported:
+
+- **Linear** (Clifford-linear forward)  
+- **Activation** (multivector embed-gate-gather)  
+- **GroupNorm** (per-group normalization + affine)
+
+---
+
+### Directory layout
+
+```
+
+csrc/
+├── linear\_optimization/
+│   ├── main.c, linear\_bench.c/.h/.impls/.setup, run\_linear.sh
+├── mv\_act\_optimization/
+│   ├── main.c, mv\_act\_bench.c/.h/.impls/.setup, run\_act.sh
+└── gnn\_optimization/
+    ├── main.c, gnn\_bench.c/.h/.impls/.setup, run\_gnn.sh
+
+
+````
+
+Each layer directory contains:
+
+- `*_bench.[ch]`  — registration + timing harness  
+- `*_impls.c`    — baseline + stubbed-out optimized variants  
+- `*_setup.[ch]` — randomized input generation & globals  
+- `main.c`       — CLI driver (mode 0 vs. mode 1)  
+- `run_*.sh`     — compile + run script (sweeps batches, emits CSV, calls plot)
+
+---
+
+### Prerequisites
+
+- **C99** compiler (e.g. `gcc` or `clang`)  
+- Linux/macOS (PMU timing via kperf on Apple, or RDTSC on x86)  
+- Python 3 + Matplotlib (optional, for plotting)
+
+---
+
+### Build & run
+
+Each layer follows the same pattern:
+
+#### 1. Fixed-input correctness & speed (mode 0)
 
 ```bash
-TODO
+cd csrc/linear_optimization
+./run_linear.sh 0
+````
+
+This will:
+
+* Run `linear_benchmark` for a fixed input
+* Print a table of each registered function’s cycles, verify outputs match, and show speedups relative to baseline.
+
+#### 2. Batch-sweep performance logging (mode 1)
+
+```bash
+cd csrc/linear_optimization
+./run_linear.sh 1
+```
+
+That script will:
+
+1. Recompile fresh.
+2. Query `./linear_benchmark --count` + `--name` to discover implementations.
+3. For each function, for each batch in `(16,32,64,…,16384)`:
+
+   * Run `./linear_benchmark 1 … <batch> <func_idx>`
+   * Append `batch,cycles,flops` to `baseline_perfplot_linear.csv`.
+4. Call `plot_performance.py baseline_perfplot_linear.csv …` to produce `perf_plot.png`.
+
+The **Activation** and **GroupNorm** directories are identical in structure; just replace `linear` with `activation` or `groupnorm` in commands (`run_act.sh`, `perfplot_activation.csv`, etc.).
+
+---
+
+### CSV format
+
+Each CSV looks like:
+
+```csv
+baseline_linear
+batch,cycles,flops
+16,67133.57,132096
+32,132913.65,264192
+…
+
+optimized_v1
+batch,cycles,flops
+16,67050.75,132096
+…
+```
+
+Plotting scripts expect:
+
+* Blocks separated by a blank line.
+* First line of each block: the function name.
+* Next line: header `batch,cycles,flops`.
+
+---
+
+### Adding your own layer or variants
+
+1. **Implement** your layer’s `.setup.c/.h` (data generation, globals).
+2. **Copy** one of the harnesses (`*_bench.c/.h`, `*_impls.c`) and adjust function pointer types.
+3. **Register** your implementations in `register_…_functions()`.
+4. **Write** a `run_*.sh` by following the templates.
+5. **Run** `./run_*.sh 0` and `./run_*.sh 1`.
+
+---
+
+### Troubleshooting
+
+* **“Abort trap: 6”** often means a null pointer or misuse of the setup globals—verify you called `setup_*()` before any benchmark loops, and `cleanup_*()` afterward.
+* If you see **undefined** globals in `*_impls.c`, check that `*_setup.h` declares them as `extern` and that your `*_setup.c` actually defines them.
+
+---
+
 ```
 
 ## How to run roofline plotting
