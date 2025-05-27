@@ -169,12 +169,23 @@ TODO
 
 ## 📝 To-Dos
 
+### PRESENTATION WEEK 02.05: 
+- [ ] All: presentation prep -- SHOULD WRITE SLIDE ABOUT OWN IMPLEMENTATION 
+- [ ] Kons : OPEN TO HELP 
+- [ ] Kons or Mikke : do final plotting
+- [ ] Mikke : clean repo 
+- [ ] Mikke : csv on who wrote what (actual implementation as TA asked)
+- [ ] Arnie : do roofline plotting and calculations for every layer (say if need to be executed on main computer )
+- [ ] Simon : AVX implementation for groupnorm
+
 ### WEEK 25.05 - 31.05:
-- [ ] Arnie: Implement Roofline plot and correct plotting
+- [ ] Arnie: finish the optimizations for the linear layer (do you consider memory ?)
+- [ ] Arnie: have the papi library figured out so that can decide if byte transferred is gonne be analytically done or automatic
 - [ ] Mikke, Kons: trying potential optimization for the activation layer 
-- [ ] Mikke: figue out AVX opt
-- [ ] Kons, Arnie: trying potential optimization for the linear layer  
-- [ ] Simon : trying potential optimization for the groupnorm layer  
+- [ ] Mikke, Kons: figue out AVX opt
+- [ ] Mikke, Kons : figure out to measure the cache misses 
+- [ ] Mikke : drafzt of the presentation (based on previous presentations) 
+- [ ] Simon : trying potential optimization for the groupnorm layer  (fuse the loops and do computation like transppose in one go)
 
 ### WEEK 19.05 - 25.05:
 - [X] All : Prepare presentation for meeting 20-30 slides
