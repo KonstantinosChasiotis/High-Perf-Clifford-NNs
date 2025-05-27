@@ -247,14 +247,6 @@ Plotting scripts expect:
 ---
 
 ### Benchmarking and plots (Kons, Arnie)
-- [ ] With a config/bash file (be able to init some parameters) and then create a CSV and directly plot it  
-- [ ] Automate the process  
-- [ ] Determine the different perspective to compare:  
-  - Py VS C baseline  
-  - C baseline VS other optimizations  
-- [ ] CYCLE COUNTER: adapted; output format should be automated  
-  - For groupnorm: extra init because 2 different timing (because the nice imports that don’t work for everyone 🙂)  
-- [ ] PLOTS: write plotting scripts  
 - [ ] Performance: Kons already has  
 - [X] Roofline: Arnie – take the CSV and do the plotting  
 - [ ] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
