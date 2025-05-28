@@ -2,7 +2,7 @@
 
 # Compiler and flags
 CC       := gcc
-CFLAGS   := -O3 -fPIC -mavx2 -mfma -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations
+CFLAGS   := -O3 -g -fPIC -mavx2 -mfma -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations -std=c99
 LDFLAGS  := -shared
 
 # Library suffix based on OS
