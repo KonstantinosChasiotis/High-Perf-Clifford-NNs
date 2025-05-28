@@ -4,6 +4,8 @@
 #include "../flops.h"
 #include <stdlib.h>
 #include <string.h>
+
+//baseline with memory alloc
 /*
 static void baseline_groupnorm(
     const float *x,
@@ -37,13 +39,13 @@ static void baseline_groupnorm(
         x_norm
     );
 }
-
-static void optimized_groupnorm_v1(
+*/
+static void  baseline_groupnorm(
     const float *x,
     int           B,
     int           C,
     int           D,
-    int           I,
+    int           _I,
     int           num_groups,
     bool          running,
     float        *running_mean_orig,
@@ -55,22 +57,322 @@ static void optimized_groupnorm_v1(
     float         momentum,
     float         eps,
     float        *x_norm
-) {
-    clifford_groupnorm(
-        x, B, C, D, I, num_groups,
-        running,
-        running_mean_orig,
-        running_cov_orig,
-        scaling,
-        weight_orig,
-        bias_orig,
-        training,
-        momentum,
-        eps,
-        x_norm
-    );
+){
+
+    //basic constants
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+    
+    //blow up running mean and cov along the batch dim
+    if ( running ){
+        for(int i = 0; i < _I; i++){ //COST: 0 flops
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_running_mean_temp[i*group_size*B + j*B + l] = running_mean_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        gn_running_cov_temp[i*_I*group_size*B + ii*group_size*B + j*B + l] = running_cov_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
+                }
+            }
+        }
+    }
+
+    //mean
+    if (training || (!running)) {
+        int mean_size = dim0 * _I;
+        for (int i = 0; i < mean_size; i++){
+            gn_mean_temp[i] = 0.0f;
+        }
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int k = 0; k < D; k++){
+                    for(int l = 0; l < _I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
+                        FLOP(1);
+                        gn_mean_temp[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
+                    }
+                }
+            }
+        }
+        for(int i = 0; i < dim0; i++){
+            for(int l = 0; l < _I; l++){ //COST: dim0*I
+                FLOP(1);
+                gn_mean_temp[i*_I + l] /= (D*num_groups);
+            }
+        }
+        if (running){ //update running mean
+            for(int i = 0; i < _I; i++){
+                for(int j = 0; j < dim0; j++){
+                    FLOP(2);
+                    FLOP(1);
+                    gn_running_mean_temp[i*dim0 + j] += momentum *(gn_mean_temp[j*_I + i] - gn_running_mean_temp[i*dim0 + j]);
+                }
+            }
+        }
+    } else { //if not training use running mean
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < dim0; j++){
+                    gn_mean_temp[j*_I + i] = gn_running_mean_temp[i*dim0 + j];
+            }
+        }
+    }
+
+    //subtract mean form x
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < _I; l++){
+                    FLOP(1);
+                    x_norm[i*num_groups*D*_I + j*D*_I + k*_I + l] = x[i*num_groups*D*_I + j*D*_I + k*_I + l] - gn_mean_temp[i*_I + l];
+                }
+            }
+        }
+    }
+
+    //permute: dim0, num_groups, D, _I -> dim0, _I, num_groups, D
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < _I; l++){
+                    gn_X_temp[i*_I*num_groups*D + l*num_groups*D + j*D +k] = x_norm[i*num_groups*D*_I + j*D*_I + k*_I + l];
+                }
+            }
+        }
+    }
+
+    //calc cov
+    if (training || (!running)){
+        int cov_size = dim0*_I*_I;
+        for (int i = 0; i < cov_size; i++){
+            gn_cov_temp[i] = 0.0f;
+        }
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < _I; j++){ //row selector
+                for(int l = 0; l < _I; l++){ //col selector
+                    for(int k = 0; k < num_groups*D; k++){
+                        FLOP(1);
+                        FLOP(1);
+                        gn_cov_temp[i*_I*_I + j*_I + l] += gn_X_temp[i*_I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*_I + k*_I + l];
+        }}}}
+        //scale all of cov
+        for(int i = 0; i < cov_size; i++){
+            FLOP(1);
+            gn_cov_temp[i] /= (num_groups * D);
+        }
+        if (running) { //upadate running cov
+            for(int i = 0; i < _I; i++){            
+                for(int ii = 0; ii < _I; ii++){
+                    for(int j = 0; j < dim0; j++){
+                        FLOP(2);
+                        FLOP(1);
+                        gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j] += momentum *(gn_cov_temp[j*_I*_I + i*_I + ii] - gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j]);
+                    }
+                }
+            }
+        }
+    } else {
+        for(int i = 0; i < _I; i++){ //if not training use running cov
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < dim0; j++){
+                    gn_cov_temp[j*_I*_I + i*_I + ii] = gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j];
+                }
+            }
+        }
+    }
+
+    //write runnning mean and cov back
+    if( running ){
+        //mean
+        for(int i = 0; i < _I*group_size; i++){
+            running_mean_orig[i] = 0;
+        }
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    FLOP(1);
+                    running_mean_orig[i*group_size + j] += gn_running_mean_temp[i*group_size*B + l*group_size + j];
+                }
+            }
+        }
+        for(int i = 0; i < _I*group_size; i++){
+            FLOP(1);
+            running_mean_orig[i] /= B;
+        }
+        //cov
+        for(int i = 0; i < _I*_I*group_size; i++){
+            running_cov_orig[i] = 0;
+        }
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        FLOP(1);
+                        running_cov_orig[i*_I*group_size + ii*group_size + j] += gn_running_cov_temp[i*_I*group_size*B + ii*group_size*B + l*group_size + j];
+                    }
+                }
+            }
+        }
+        for(int i = 0; i < _I*_I*group_size; i++){
+            FLOP(1);
+            running_cov_orig[i] /= B;
+        }
+
+    }
+
+    //get max for each groups cov matrix
+    for(int i = 0; i < dim0; i++){
+        gn_max_temp[i] = gn_cov_temp[i*_I*_I];
+        for(int j = 1; j < _I*_I; j++){
+            gn_max_temp[i] = gn_cov_temp[i*_I*_I + j] > gn_max_temp[i] ? gn_cov_temp[i*_I*_I + j] : gn_max_temp[i];
+        }
+    }
+
+    //add pertubation to diagonal
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < _I; j++){
+            FLOP(1);
+            gn_cov_temp[i*_I*_I + j*_I + j] += gn_max_temp[i]*eps;
+    }}
+
+    //Src: https://github.com/mdwarfgeek/lib/blob/master/cholesky.c
+    /* In-place Cholesky decomposition for L in A = L L^T where L is a
+    lower triangular matrix.  Uses the Cholesky-Crout algorithm,
+    based on Stoer & Bulirsch "Introduction to numerical analysis"
+    Sect. 4.3, but with the loops for i = j and i != j separated and
+    changed to access only the lower triangular part of the matrix.
+    Output is computed column by column so the accesses in the
+    innermost loop (indexed by k) are sequential in memory. */
+
+    for(int i = 0; i < dim0; i++){
+        int n = _I;
+        float *a = &gn_cov_temp[i*_I*_I];
+        float x, r;
+        int i, j, k;
+        /* Loop over columns */
+        for(j = 0; j < n; j++) {
+            /* i = j */
+            x = a[j*n+j];  /* A_jj */
+
+            for(k = 0; k < j; k++)
+            x -= a[j*n+k] * a[j*n+k];  /* L_jk L_jk */
+
+            if(x < 0)
+                printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
+
+            x = sqrt(x);
+
+            a[j*n+j] = x;  /* L_jj */
+            r = 1.0 / x;
+
+            /* i != j */
+            for(i = j+1; i < n; i++) {
+            x = a[i*n+j];  /* A_ij */
+
+            for(k = 0; k < j; k++)
+                x -= a[i*n+k] * a[j*n+k];  /* L_ik L_ij */
+
+            a[i*n+j] = x * r;  /* L_ij = x / L_jj */
+            }
+        }
+        //baseline just transpose back inplace 
+        for(i = 0; i < n; i++){
+            for(j = i; j < n; j++){
+                x = a[i*n +j];
+                a[i*n +j] = a[j*n+i];
+                a[j*n+i] = x;
+            }
+        }
+    }
+
+    //solve triangular
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI div
+                    float *mat = gn_cov_temp + (i*_I*_I);
+                    float *vec = x_norm + (i*num_groups*D*_I + j*D*_I + k*_I);
+                    for(int r = _I-1; r >= 0; r--){//from last row to first
+                        float rowsum = 0.0f;
+                        for(int c = _I-1; c > r; c--){//do the partioal vec row mult
+                            FLOP(1);
+                            FLOP(1);
+                            rowsum += mat[r*_I + c]*vec[c];
+                        }
+                        FLOP(1);
+                        rowsum = vec[r] - rowsum;
+                        FLOP(1);
+                        vec[r] = rowsum / mat[r*_I + r];
+                    }
+            }
+        }
+    }
+
+    //blow up weight and bias
+    if ( scaling ){
+        for(int i = 0; i < _I; i++){
+            for(int ii = 0; ii < _I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        gn_weight_temp[i*_I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
+                }
+            }
+        }
+        
+        for(int i = 0; i < _I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+    }
+
+    //scaling or just copy over
+    if ( scaling ){
+        //permute weight from (_I0, _I1, dim0) to (dim0, _I0, _I1)
+        //think their code is wrong since they dont permute the bias and just reshape it...
+        for(int i = 0; i < _I*_I; i++){
+            for(int j = 0; j < dim0; j++){
+                gn_weight_perm_temp[j*_I*_I + i] = gn_weight_temp[i*dim0 + j];
+            }
+        }
+
+        //mat mult and add 
+        float vecmult[8]; //put this on the stack since 3D is max size anyways
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *W = gn_weight_perm_temp + i*_I*_I;
+                    float *xv = x_norm + i*num_groups*D*_I + j*D*_I + l*_I;
+                    float *b = gn_bias_temp + i*_I;
+                    //(I,I)x(I,1)
+                    for(int ii = 0; ii < _I; ii++){
+                        vecmult[ii] = 0.0f;
+                        for(int jj = 0; jj < _I; jj++){
+                            FLOP(1);
+                            FLOP(1);
+                            vecmult[ii] += W[ii*_I + jj] * xv[jj];
+                        }
+                        FLOP(1);
+                        vecmult[ii] += b[ii];
+                    }
+                    for(int ii = 0; ii < _I; ii++){
+                        xv[ii] = vecmult[ii];
+                    }
+                }
+            }
+        }
+    }
+
+    return;
 }
-*/
+
 static void optimized_groupnorm_v0(
     const float *x,
     int           B,
@@ -409,15 +711,14 @@ static void optimized_groupnorm_v0(
     }
 
     return;
-
 }
 
-static void  baseline_groupnorm(
+static void optimized_groupnorm_v1(
     const float *x,
     int           B,
     int           C,
     int           D,
-    int           _I,
+    int           I,
     int           num_groups,
     bool          running,
     float        *running_mean_orig,
@@ -429,68 +730,31 @@ static void  baseline_groupnorm(
     float         momentum,
     float         eps,
     float        *x_norm
-){
+) {
 
-    //basic constants
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
     
-    //blow up running mean and cov along the batch dim
-    if ( running ){
-        for(int i = 0; i < _I; i++){ //COST: 0 flops
-            for(int j = 0; j < group_size; j++){
-                for(int l = 0; l < B; l++){
-                    gn_running_mean_temp[i*group_size*B + j*B + l] = running_mean_orig[i*group_size + ((j*B + l)%group_size)];
-                }
-            }
-        }
-        for(int i = 0; i < _I; i++){
-            for(int ii = 0; ii < _I; ii++){
-                for(int j = 0; j < group_size; j++){
-                    for(int l = 0; l < B; l++){
-                        gn_running_cov_temp[i*_I*group_size*B + ii*group_size*B + j*B + l] = running_cov_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
-                    }
+
+    //mean
+    int mean_size = dim0 * I;
+    for (int i = 0; i < mean_size; i++){
+        gn_mean_temp[i] = 0.0f;
+    }
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
+                    FLOP(1);
+                    gn_mean_temp[i*I + l] += x[i*num_groups*D*I + j*D*I + k*I + l];
                 }
             }
         }
     }
-
-    //mean
-    if (training || (!running)) {
-        int mean_size = dim0 * _I;
-        for (int i = 0; i < mean_size; i++){
-            gn_mean_temp[i] = 0.0f;
-        }
-        for(int i = 0; i < dim0; i++){
-            for(int j = 0; j < num_groups; j++){
-                for(int k = 0; k < D; k++){
-                    for(int l = 0; l < _I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
-                        FLOP(1);
-                        gn_mean_temp[i*_I + l] += x[i*num_groups*D*_I + j*D*_I + k*_I + l];
-                    }
-                }
-            }
-        }
-        for(int i = 0; i < dim0; i++){
-            for(int l = 0; l < _I; l++){ //COST: dim0*I
-                FLOP(1);
-                gn_mean_temp[i*_I + l] /= (D*num_groups);
-            }
-        }
-        if (running){ //update running mean
-            for(int i = 0; i < _I; i++){
-                for(int j = 0; j < dim0; j++){
-                    FLOP(2);
-                    FLOP(1);
-                    gn_running_mean_temp[i*dim0 + j] += momentum *(gn_mean_temp[j*_I + i] - gn_running_mean_temp[i*dim0 + j]);
-                }
-            }
-        }
-    } else { //if not training use running mean
-        for(int i = 0; i < _I; i++){
-            for(int j = 0; j < dim0; j++){
-                    gn_mean_temp[j*_I + i] = gn_running_mean_temp[i*dim0 + j];
-            }
+    for(int i = 0; i < dim0; i++){
+        for(int l = 0; l < I; l++){ //COST: dim0*I
+            FLOP(1);
+            gn_mean_temp[i*I + l] /= (D*num_groups);
         }
     }
 
@@ -498,119 +762,60 @@ static void  baseline_groupnorm(
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
             for(int k = 0; k < D; k++){
-                for(int l = 0; l < _I; l++){
+                for(int l = 0; l < I; l++){
                     FLOP(1);
-                    x_norm[i*num_groups*D*_I + j*D*_I + k*_I + l] = x[i*num_groups*D*_I + j*D*_I + k*_I + l] - gn_mean_temp[i*_I + l];
+                    x_norm[i*num_groups*D*I + j*D*I + k*I + l] = x[i*num_groups*D*I + j*D*I + k*I + l] - gn_mean_temp[i*I + l];
                 }
             }
         }
     }
 
-    //permute: dim0, num_groups, D, _I -> dim0, _I, num_groups, D
+    //permute: dim0, num_groups, D, I -> dim0, I, num_groups, D
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
             for(int k = 0; k < D; k++){
-                for(int l = 0; l < _I; l++){
-                    gn_X_temp[i*_I*num_groups*D + l*num_groups*D + j*D +k] = x_norm[i*num_groups*D*_I + j*D*_I + k*_I + l];
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*I*num_groups*D + l*num_groups*D + j*D +k] = x_norm[i*num_groups*D*I + j*D*I + k*I + l];
                 }
             }
         }
     }
 
     //calc cov
-    if (training || (!running)){
-        int cov_size = dim0*_I*_I;
-        for (int i = 0; i < cov_size; i++){
-            gn_cov_temp[i] = 0.0f;
-        }
-        for(int i = 0; i < dim0; i++){
-            for(int j = 0; j < _I; j++){ //row selector
-                for(int l = 0; l < _I; l++){ //col selector
-                    for(int k = 0; k < num_groups*D; k++){
-                        FLOP(1);
-                        FLOP(1);
-                        gn_cov_temp[i*_I*_I + j*_I + l] += gn_X_temp[i*_I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*_I + k*_I + l];
-        }}}}
-        //scale all of cov
-        for(int i = 0; i < cov_size; i++){
-            FLOP(1);
-            gn_cov_temp[i] /= (num_groups * D);
-        }
-        if (running) { //upadate running cov
-            for(int i = 0; i < _I; i++){            
-                for(int ii = 0; ii < _I; ii++){
-                    for(int j = 0; j < dim0; j++){
-                        FLOP(2);
-                        FLOP(1);
-                        gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j] += momentum *(gn_cov_temp[j*_I*_I + i*_I + ii] - gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j]);
-                    }
-                }
-            }
-        }
-    } else {
-        for(int i = 0; i < _I; i++){ //if not training use running cov
-            for(int ii = 0; ii < _I; ii++){
-                for(int j = 0; j < dim0; j++){
-                    gn_cov_temp[j*_I*_I + i*_I + ii] = gn_running_cov_temp[i*_I*dim0 + ii*dim0 + j];
-                }
-            }
-        }
+    int cov_size = dim0*I*I;
+    for (int i = 0; i < cov_size; i++){
+        gn_cov_temp[i] = 0.0f;
     }
-
-    //write runnning mean and cov back
-    if( running ){
-        //mean
-        for(int i = 0; i < _I*group_size; i++){
-            running_mean_orig[i] = 0;
-        }
-        for(int i = 0; i < _I; i++){
-            for(int j = 0; j < group_size; j++){
-                for(int l = 0; l < B; l++){
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            for(int l = 0; l < I; l++){ //col selector
+                for(int k = 0; k < num_groups*D; k++){
                     FLOP(1);
-                    running_mean_orig[i*group_size + j] += gn_running_mean_temp[i*group_size*B + l*group_size + j];
-                }
-            }
-        }
-        for(int i = 0; i < _I*group_size; i++){
-            FLOP(1);
-            running_mean_orig[i] /= B;
-        }
-        //cov
-        for(int i = 0; i < _I*_I*group_size; i++){
-            running_cov_orig[i] = 0;
-        }
-        for(int i = 0; i < _I; i++){
-            for(int ii = 0; ii < _I; ii++){
-                for(int j = 0; j < group_size; j++){
-                    for(int l = 0; l < B; l++){
-                        FLOP(1);
-                        running_cov_orig[i*_I*group_size + ii*group_size + j] += gn_running_cov_temp[i*_I*group_size*B + ii*group_size*B + l*group_size + j];
-                    }
-                }
-            }
-        }
-        for(int i = 0; i < _I*_I*group_size; i++){
-            FLOP(1);
-            running_cov_orig[i] /= B;
-        }
-
+                    FLOP(1);
+                    gn_cov_temp[i*I*I + j*I + l] += gn_X_temp[i*I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*I + k*I + l];
+    }}}}
+    //scale all of cov
+    for(int i = 0; i < cov_size; i++){
+        FLOP(1);
+        gn_cov_temp[i] /= (num_groups * D);
     }
 
     //get max for each groups cov matrix
     for(int i = 0; i < dim0; i++){
-        gn_max_temp[i] = gn_cov_temp[i*_I*_I];
-        for(int j = 1; j < _I*_I; j++){
-            gn_max_temp[i] = gn_cov_temp[i*_I*_I + j] > gn_max_temp[i] ? gn_cov_temp[i*_I*_I + j] : gn_max_temp[i];
+        gn_max_temp[i] = gn_cov_temp[i*I*I];
+        for(int j = 1; j < I*I; j++){
+            gn_max_temp[i] = gn_cov_temp[i*I*I + j] > gn_max_temp[i] ? gn_cov_temp[i*I*I + j] : gn_max_temp[i];
         }
     }
 
     //add pertubation to diagonal
     for(int i = 0; i < dim0; i++){
-        for(int j = 0; j < _I; j++){
+        for(int j = 0; j < I; j++){
             FLOP(1);
-            gn_cov_temp[i*_I*_I + j*_I + j] += gn_max_temp[i]*eps;
+            gn_cov_temp[i*I*I + j*I + j] += gn_max_temp[i]*eps;
     }}
 
+    //cholesky decomp
     //Src: https://github.com/mdwarfgeek/lib/blob/master/cholesky.c
     /* In-place Cholesky decomposition for L in A = L L^T where L is a
     lower triangular matrix.  Uses the Cholesky-Crout algorithm,
@@ -619,10 +824,9 @@ static void  baseline_groupnorm(
     changed to access only the lower triangular part of the matrix.
     Output is computed column by column so the accesses in the
     innermost loop (indexed by k) are sequential in memory. */
-
     for(int i = 0; i < dim0; i++){
-        int n = _I;
-        float *a = &gn_cov_temp[i*_I*_I];
+        int n = I;
+        float *a = &gn_cov_temp[i*I*I];
         float x, r;
         int i, j, k;
         /* Loop over columns */
@@ -661,23 +865,31 @@ static void  baseline_groupnorm(
         }
     }
 
-    //solve triangular
+    //invert the diagaonal first then
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+    }
+
+    //solve triangular with the already inverted diagonal
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups; j++){
             for(int k = 0; k < D; k++){ //cost: BCDI(I-1)/2 mults and adds, BCDI div
-                    float *mat = gn_cov_temp + (i*_I*_I);
-                    float *vec = x_norm + (i*num_groups*D*_I + j*D*_I + k*_I);
-                    for(int r = _I-1; r >= 0; r--){//from last row to first
+                    float *mat = gn_cov_temp + (i*I*I);
+                    float *vec = x_norm + (i*num_groups*D*I + j*D*I + k*I);
+                    for(int r = I-1; r >= 0; r--){//from last row to first
                         float rowsum = 0.0f;
-                        for(int c = _I-1; c > r; c--){//do the partioal vec row mult
+                        for(int c = I-1; c > r; c--){//do the partioal vec row mult
                             FLOP(1);
                             FLOP(1);
-                            rowsum += mat[r*_I + c]*vec[c];
+                            rowsum += mat[r*I + c]*vec[c];
                         }
                         FLOP(1);
                         rowsum = vec[r] - rowsum;
                         FLOP(1);
-                        vec[r] = rowsum / mat[r*_I + r];
+                        vec[r] = rowsum * mat[r*I + r];
                     }
             }
         }
@@ -685,32 +897,30 @@ static void  baseline_groupnorm(
 
     //blow up weight and bias
     if ( scaling ){
-        for(int i = 0; i < _I; i++){
-            for(int ii = 0; ii < _I; ii++){
+        for(int i = 0; i < I; i++){
+            for(int ii = 0; ii < I; ii++){
                 for(int j = 0; j < group_size; j++){
                     for(int l = 0; l < B; l++){
-                        gn_weight_temp[i*_I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*_I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                        gn_weight_temp[i*I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*I*group_size + ii*group_size + ((j*B + l)%group_size)];
                     }
                 }
             }
         }
         
-        for(int i = 0; i < _I; i++){
+        for(int i = 0; i < I; i++){
             for(int j = 0; j < group_size; j++){
                 for(int l = 0; l < B; l++){
                     gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
                 }
             }
         }
-    }
-
-    //scaling or just copy over
-    if ( scaling ){
-        //permute weight from (_I0, _I1, dim0) to (dim0, _I0, _I1)
+    
+        //scaling or just copy over
+        //permute weight from (I0, I1, dim0) to (dim0, I0, I1)
         //think their code is wrong since they dont permute the bias and just reshape it...
-        for(int i = 0; i < _I*_I; i++){
+        for(int i = 0; i < I*I; i++){
             for(int j = 0; j < dim0; j++){
-                gn_weight_perm_temp[j*_I*_I + i] = gn_weight_temp[i*dim0 + j];
+                gn_weight_perm_temp[j*I*I + i] = gn_weight_temp[i*dim0 + j];
             }
         }
 
@@ -720,21 +930,21 @@ static void  baseline_groupnorm(
             for(int j = 0; j < num_groups; j++){
                 for(int l = 0; l < D; l++){
                     //xn = Wx + b
-                    float *W = gn_weight_perm_temp + i*_I*_I;
-                    float *xv = x_norm + i*num_groups*D*_I + j*D*_I + l*_I;
-                    float *b = gn_bias_temp + i*_I;
+                    float *W = gn_weight_perm_temp + i*I*I;
+                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
+                    float *b = gn_bias_temp + i*I;
                     //(I,I)x(I,1)
-                    for(int ii = 0; ii < _I; ii++){
+                    for(int ii = 0; ii < I; ii++){
                         vecmult[ii] = 0.0f;
-                        for(int jj = 0; jj < _I; jj++){
+                        for(int jj = 0; jj < I; jj++){
                             FLOP(1);
                             FLOP(1);
-                            vecmult[ii] += W[ii*_I + jj] * xv[jj];
+                            vecmult[ii] += W[ii*I + jj] * xv[jj];
                         }
                         FLOP(1);
                         vecmult[ii] += b[ii];
                     }
-                    for(int ii = 0; ii < _I; ii++){
+                    for(int ii = 0; ii < I; ii++){
                         xv[ii] = vecmult[ii];
                     }
                 }
@@ -748,6 +958,6 @@ static void  baseline_groupnorm(
 // ——— Register them in the order you want them tested ———
 void register_groupnorm_functions(void) {
     add_groupnorm_function(baseline_groupnorm,      "baseline_groupnorm");
-    add_groupnorm_function(optimized_groupnorm_v0,  "optimized_groupnorm_v0");
-    //add_groupnorm_function(optimized_groupnorm_v2,  "optimized_groupnorm_v2");
+    add_groupnorm_function(optimized_groupnorm_v0,  "optimized_groupnorm_v0"); //invert diag back sub
+    //add_groupnorm_function(optimized_groupnorm_v1,  "optimized_groupnorm_v1"); //
 }
