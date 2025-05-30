@@ -237,11 +237,11 @@ Plotting scripts expect:
 ### Layer – Group normalizations (Simon, Kons)
 - [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [ ] Use loop unrolling and accumulators  
-- [ ] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
-- [ ] Don’t permute  
-- [ ] Note the expensive things often have I dimensions; the only I dimension we need to support are 2, 4 and 8 – maybe we could create super-optimized version for these input sizes  
+- [X] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
+- [X] Don’t transpose for covariance  
+- [X] Note the expensive things often have I dimensions; the only I dimension we need to support are 2, 4 and 8 – maybe we could create super-optimized version for these input sizes  
 - [X] On the back substitution we could first norm the diagonal since we do backsub many vectors with one mat (numerical stability might arise)  
-- [ ] Generally use vectorization (especially if we have the I dimension)  
+- [X] Generally use vectorization (especially if we have the I dimension)  
 - [ ] If LAPACKE and BLAS still give issues then include directly in the code base the different requirement – mail the TA to see if he also had this issue  
 
 ---
