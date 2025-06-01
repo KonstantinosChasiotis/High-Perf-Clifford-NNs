@@ -116,7 +116,7 @@ void clifford_groupnorm_alloctemp(
 
     //basic constants
     int dim0 = (B*C)/num_groups;
-    int group_size = C/num_groups;
+    //int group_size = C/num_groups;
 
     //allocate temp memory (zeroed!!!)
     *running_mean_temp = NULL;
