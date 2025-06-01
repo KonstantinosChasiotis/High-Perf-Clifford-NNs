@@ -2112,6 +2112,309 @@ static void optimized_groupnorm_v5(
 }
 
 
+static void optimized_groupnorm_v6(
+    const float *x,
+    int           B,
+    int           C,
+    int           D,
+    int           I,
+    int           num_groups,
+    bool          running,
+    float        *running_mean_orig,
+    float        *running_cov_orig,
+    bool          scaling,
+    const float  *weight_orig,
+    const float  *bias_orig,
+    bool          training,
+    float         momentum,
+    float         eps,
+    float        *x_norm
+) {
+
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+    
+    assert(I == 8); //optimized for 3D
+    assert(dim0 >= 8); //use gn_max_temp different now so needs to be at least 8 long
+    assert((D*num_groups)%8 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation
+
+    //mean
+   __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        //calc mean
+        __m256 accum = _mm256_setzero_ps();
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                __m256 row = _mm256_loadu_ps(&x[i*num_groups*D*I + j*D*I + k*I]);
+                FLOP(8);
+                accum = _mm256_add_ps(accum, row);
+            }
+        }
+        FLOP(8);
+        accum = _mm256_mul_ps(accum, mean_scale);
+        //center around mean
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                __m256 row = _mm256_loadu_ps(&x[i*num_groups*D*I + j*D*I + k*I]);
+                FLOP(8);
+                row = _mm256_sub_ps(row, accum);
+                _mm256_storeu_ps(&x_norm[i*num_groups*D*I + j*D*I + k*I], row);
+            }
+        }
+    }
+
+    //calc cov
+    __m256 cov_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            __m256 accum0 = _mm256_setzero_ps();
+            __m256 accum1 = _mm256_setzero_ps();
+            __m256 accum2 = _mm256_setzero_ps();
+            __m256 accum3 = _mm256_setzero_ps();
+            __m256 accum4 = _mm256_setzero_ps();
+            __m256 accum5 = _mm256_setzero_ps();
+            __m256 accum6 = _mm256_setzero_ps();
+            __m256 accum7 = _mm256_setzero_ps(); // use 8 accumulators because _mm256_fmadd_ps has latency 4 and intel tp 0.5
+            for(int k = 0; k < num_groups*D; k+=8){
+                __m256 j_part0 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + k*I + j]);
+                __m256 j_part1 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+1)*I + j]);
+                __m256 j_part2 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+2)*I + j]);
+                __m256 j_part3 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+3)*I + j]);
+                __m256 j_part4 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+4)*I + j]);
+                __m256 j_part5 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+5)*I + j]);
+                __m256 j_part6 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+6)*I + j]);
+                __m256 j_part7 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+7)*I + j]);
+
+                __m256 l_part0 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + k*I]);
+                __m256 l_part1 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+1)*I]);
+                __m256 l_part2 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+2)*I]);
+                __m256 l_part3 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+3)*I]);
+                __m256 l_part4 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+4)*I]);
+                __m256 l_part5 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+5)*I]);
+                __m256 l_part6 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+6)*I]);
+                __m256 l_part7 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+7)*I]);
+
+                FLOP(16);
+                accum0 = _mm256_fmadd_ps(j_part0, l_part0, accum0);
+                FLOP(16);
+                accum1 = _mm256_fmadd_ps(j_part1, l_part1, accum1);
+                FLOP(16);
+                accum2 = _mm256_fmadd_ps(j_part2, l_part2, accum2);
+                FLOP(16);
+                accum3 = _mm256_fmadd_ps(j_part3, l_part3, accum3);
+                FLOP(16);
+                accum4 = _mm256_fmadd_ps(j_part4, l_part4, accum4);
+                FLOP(16);
+                accum5 = _mm256_fmadd_ps(j_part5, l_part5, accum5);
+                FLOP(16);
+                accum6 = _mm256_fmadd_ps(j_part6, l_part6, accum6);
+                FLOP(16);
+                accum7 = _mm256_fmadd_ps(j_part7, l_part7, accum7);
+            }
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum1);
+            FLOP(8);
+            accum2 = _mm256_add_ps(accum2, accum3);
+            FLOP(8);
+            accum4 = _mm256_add_ps(accum4, accum5);
+            FLOP(8);
+            accum6 = _mm256_add_ps(accum6, accum7);
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum2);
+            FLOP(8);
+            accum4 = _mm256_add_ps(accum4, accum6);
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum4);
+            accum0 = _mm256_mul_ps(accum0, cov_scale);
+            _mm256_storeu_ps(&gn_cov_temp[i*I*I + j*I], accum0);
+        }
+    }
+
+    for(int i = 0; i < dim0; i++){
+        __m256 maxv = _mm256_loadu_ps(&gn_cov_temp[i*I*I]);
+        //float max = gn_cov_temp[i*I*I];
+        for(int j = 1; j < I; j++){
+            __m256 row = _mm256_loadu_ps(&gn_cov_temp[i*I*I + j*I]);
+            maxv = _mm256_max_ps(maxv, row);
+            //max = fmaxf(max, gn_cov_temp[i*I*I + j]);
+        }
+        _mm256_storeu_ps(gn_max_temp, maxv);
+        float max = gn_max_temp[0];
+        for(int j = 1; j < I; j++){
+            max = gn_max_temp[j] > max ? gn_max_temp[j] : max;
+        }
+        FLOP(1);
+        max = max*eps;
+        for(int j = 0; j < I; j++){
+            FLOP(1);
+            gn_cov_temp[i*I*I + j*I + j] += max;
+        }
+    }
+
+    //cholesky decomp
+    //Src: https://github.com/mdwarfgeek/lib/blob/master/cholesky.c
+    /* In-place Cholesky decomposition for L in A = L L^T where L is a
+    lower triangular matrix.  Uses the Cholesky-Crout algorithm,
+    based on Stoer & Bulirsch "Introduction to numerical analysis"
+    Sect. 4.3, but with the loops for i = j and i != j separated and
+    changed to access only the lower triangular part of the matrix.
+    Output is computed column by column so the accesses in the
+    innermost loop (indexed by k) are sequential in memory. */
+    for(int i = 0; i < dim0; i++){
+        int n = I;
+        float *a = &gn_cov_temp[i*I*I];
+        float x, r;
+        int i, j, k;
+        /* Loop over columns */
+        for(j = 0; j < n; j++) {
+            /* i = j */
+            x = a[j*n+j];  /* A_jj */
+
+            for(k = 0; k < j; k++){
+                FLOP(2);
+                x -= a[j*n+k] * a[j*n+k];  /* L_jk L_jk */
+            }
+
+            if(x < 0)
+                printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
+
+            FLOP(30);
+            x = sqrt(x);
+
+            a[j*n+j] = x;  /* L_jj */
+            FLOP(1);
+            r = 1.0 / x;
+
+            /* i != j */
+            for(i = j+1; i < n; i++) {
+                x = a[i*n+j];  /* A_ij */
+
+                for(k = 0; k < j; k++){
+                    FLOP(2);
+                    x -= a[i*n+k] * a[j*n+k];  /* L_ik L_ij */
+                }
+                FLOP(1);
+                a[i*n+j] = x * r;  /* L_ij = x / L_jj */
+            }
+        }
+    }
+
+    //invert the diagaonal first then
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+    }
+
+    
+    //reshape
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*num_groups*D*I + j*I + l*I + k] = x_norm[i*num_groups*D*I + j*I + k*I + l];
+                }
+            }
+        }
+    }
+    
+    //vectorized backsubstitution
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups*D; j += 8){
+            float *mat = gn_cov_temp + (i*I*I);
+            float *vec = gn_X_temp + (i*num_groups*D*I + j*I); //8xI vector
+            for(int r = I-1; r >= 0; r--){//from last row to first
+                //float rowsum = 0.0f;
+                __m256 rowsum = _mm256_setzero_ps();
+                for(int c = I-1; c > r; c--){//do the partioal vec row mult
+                    __m256 vec_elem = _mm256_loadu_ps(&vec[c*8]);
+                    __m256 mat_elem = _mm256_broadcast_ss(&mat[c*I + r]);
+                    FLOP(16);
+                    rowsum = _mm256_fmadd_ps(mat_elem, vec_elem, rowsum);
+                }
+                __m256 vec_elem = _mm256_loadu_ps(&vec[r*8]);
+                FLOP(8);
+                rowsum = _mm256_sub_ps(vec_elem, rowsum);
+                __m256 mat_elem = _mm256_broadcast_ss(&mat[r*I + r]);
+                FLOP(8);
+                __m256 res = _mm256_mul_ps(rowsum, mat_elem);
+                _mm256_storeu_ps(&vec[r*8], res);
+            }
+        }
+    }
+    
+    //reshape
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    x_norm[i*num_groups*D*I + j*I + k*I + l] = gn_X_temp[i*num_groups*D*I + j*I + l*I + k];
+                }
+            }
+        }
+    }
+    
+    //blow up weight and bias
+    if ( scaling ){
+        for(int i = 0; i < I; i++){
+            for(int ii = 0; ii < I; ii++){
+                for(int j = 0; j < group_size; j++){
+                    for(int l = 0; l < B; l++){
+                        gn_weight_temp[i*I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*I*group_size + ii*group_size + ((j*B + l)%group_size)];
+                    }
+                }
+            }
+        }
+        
+        for(int i = 0; i < I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+    
+        //scaling or just copy over
+        //permute weight from (I0, I1, dim0) to (dim0, I0, I1)
+        //think their code is wrong since they dont permute the bias and just reshape it...
+        for(int i = 0; i < I*I; i++){
+            for(int j = 0; j < dim0; j++){
+                gn_weight_perm_temp[j*I*I + i] = gn_weight_temp[i*dim0 + j];
+            }
+        }
+
+        //mat mult and add
+        float vecmult[8]; //put this on the stack since 3D is max size anyways
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *W = gn_weight_perm_temp + i*I*I;
+                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
+                    float *b = gn_bias_temp + i*I;
+                    //(I,I)x(I,1)
+                    for(int ii = 0; ii < I; ii++){
+                        vecmult[ii] = 0.0f;
+                        for(int jj = 0; jj < I; jj++){
+                            FLOP(1);
+                            FLOP(1);
+                            vecmult[ii] += W[ii*I + jj] * xv[jj];
+                        }
+                        FLOP(1);
+                        vecmult[ii] += b[ii];
+                    }
+                    for(int ii = 0; ii < I; ii++){
+                        xv[ii] = vecmult[ii];
+                    }
+                }
+            }
+        }
+    }
+
+    return;
+}
+
 // ——— Register them in the order you want them tested ———
 void register_groupnorm_functions(void) {
     add_groupnorm_function(baseline_groupnorm,      "baseline_groupnorm");
@@ -2121,4 +2424,5 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v3,  "optimized_groupnorm_v3"); //max permute temp vars
     add_groupnorm_function(optimized_groupnorm_v4,  "optimized_groupnorm_v4"); //vectorize backsubstitution
     add_groupnorm_function(optimized_groupnorm_v5,  "optimized_groupnorm_v5"); //dont transpose cholesky decomp
+    add_groupnorm_function(optimized_groupnorm_v6,  "optimized_groupnorm_v6"); //8 accumulators for cov
 }
