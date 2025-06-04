@@ -24,6 +24,17 @@ void optimized_linear_simple(
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
     static int    last_sz = 0;
@@ -64,6 +75,7 @@ void optimized_linear_simple(
                 if (L->bias) {
                     acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 }
                 float *Krow = K + (size_t)r * d_flat;
 
@@ -75,16 +87,19 @@ void optimized_linear_simple(
                          + Krow[d+2] * Xf[d+2]
                          + Krow[d+3] * Xf[d+3];
                     FLOP(8);
+                    // BYTES_READ(sizeof(float) * 8); // 4 from Krow, 4 from Xf
                 }
                 // tail cleanup
                 for (; d < d_flat; ++d) {
                     acc += Krow[d] * Xf[d];
                     FLOP(2);
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
 
                 // write back into exactly the same layout as baseline:
                 // out[b*(C_out*I) + oc*I + i_out]
                 outb[ oc*I + i_out ] = acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -102,6 +117,17 @@ void optimized_linear_v2(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -148,6 +174,7 @@ void optimized_linear_v2(
                 if (L->bias) {
                     acc0 = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 }
                 
                 float *Krow = K + (size_t)r * d_flat;
@@ -161,6 +188,7 @@ void optimized_linear_v2(
                     acc2 += Krow[d+2] * Xf[d+2];
                     acc3 += Krow[d+3] * Xf[d+3];
                     FLOP(8); // 4 muls, 4 adds
+                    // BYTES_READ(sizeof(float) * 8); // 4 from Krow, 4 from Xf
                 }
                 
                 // Sum the k-accumulators
@@ -171,11 +199,13 @@ void optimized_linear_v2(
                 for (; d < d_flat; ++d) {
                     total_acc += Krow[d] * Xf[d];
                     FLOP(2); // 1 mul,1 add
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
 
                 // write back into exactly the same layout as baseline:
                 // out[b*(C_out*I) + oc*I + i_out]
                 outb[ oc*I + i_out ] = total_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -193,6 +223,17 @@ void optimized_linear_v3(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -234,6 +275,7 @@ void optimized_linear_v3(
                 if (L->bias) {
                     acc0 = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 }
                 
                 float *Krow = K + (size_t)r * d_flat;
@@ -247,6 +289,7 @@ void optimized_linear_v3(
                     acc2 = fmaf(Krow[d+2], Xf[d+2], acc2);
                     acc3 = fmaf(Krow[d+3], Xf[d+3], acc3);
                     FLOP(8); // 4 FMAs, so 4 muls and 4adds
+                    // BYTES_READ(sizeof(float) * 8); // 4 from Krow, 4 from Xf
                 }
                 
                 float total_acc = acc0 + acc1 + acc2 + acc3;
@@ -255,9 +298,11 @@ void optimized_linear_v3(
                 for (; d < d_flat; ++d) {
                     total_acc = fmaf(Krow[d], Xf[d], total_acc);
                     FLOP(2); // 1 FMA (i.e. 1 mul & 1 add)
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
 
                 outb[ oc*I + i_out ] = total_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -275,6 +320,17 @@ void optimized_linear_v4(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -313,6 +369,7 @@ void optimized_linear_v4(
                 if (L->bias) {
                     final_acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 } else {
                     final_acc = 0.0f;
                 }
@@ -347,6 +404,7 @@ void optimized_linear_v4(
                         acc2_tile = fmaf(Krow_tile_ptr[d_tile_idx+2], Xf_tile_ptr[d_tile_idx+2], acc2_tile);
                         acc3_tile = fmaf(Krow_tile_ptr[d_tile_idx+3], Xf_tile_ptr[d_tile_idx+3], acc3_tile);
                         FLOP(8);
+                        // BYTES_READ(sizeof(float) * 8); // 4 from Krow_tile_ptr, 4 from Xf_tile_ptr
                     }
 
                     float total_acc_tile = 0.0f;
@@ -359,12 +417,14 @@ void optimized_linear_v4(
                     for (; d_tile_idx < current_block_num_elems; ++d_tile_idx) {
                         total_acc_tile = fmaf(Krow_tile_ptr[d_tile_idx], Xf_tile_ptr[d_tile_idx], total_acc_tile);
                         FLOP(2);
+                        // BYTES_READ(sizeof(float) * 2); // 1 from Krow_tile_ptr, 1 from Xf_tile_ptr
                     }
 
                     final_acc += total_acc_tile; //final result
                     FLOP(1); 
                 }
                 outb[ oc*I + i_out ] = final_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -382,6 +442,17 @@ void optimized_linear_v5(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -420,6 +491,7 @@ void optimized_linear_v5(
                 if (L->bias) {
                     final_acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 } else {
                     final_acc = 0.0f;
                 }
@@ -453,6 +525,7 @@ void optimized_linear_v5(
                         acc2_tile = fmaf(Krow_tile_ptr[d_tile_idx+2], Xf_tile_ptr[d_tile_idx+2], acc2_tile);
                         acc3_tile = fmaf(Krow_tile_ptr[d_tile_idx+3], Xf_tile_ptr[d_tile_idx+3], acc3_tile);
                         FLOP(8);
+                        // BYTES_READ(sizeof(float) * 8); // 4 from Krow_tile_ptr, 4 from Xf_tile_ptr
                     }
 
                     float total_acc_tile = 0.0f;
@@ -471,6 +544,7 @@ void optimized_linear_v5(
                     FLOP(1); 
                 }
                 outb[ oc*I + i_out ] = final_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -498,6 +572,17 @@ void optimized_linear_v6_avx(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -540,6 +625,7 @@ void optimized_linear_v6_avx(
                 if (L->bias) {
                     total_acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 } else {
                     total_acc = 0.0f;
                 }
@@ -554,6 +640,7 @@ void optimized_linear_v6_avx(
                     __m256 x_chunk = _mm256_load_ps(Xf + d);
                     vec_acc = _mm256_fmadd_ps(k_chunk, x_chunk, vec_acc);
                     FLOP(16); // 8 FMAs = 8 muls + 8 adds so 16 flops total right?
+                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
                 }
                 
                 // Horzintally sum the floats (is there a more optimal way for this?)
@@ -566,8 +653,10 @@ void optimized_linear_v6_avx(
                 for (; d < d_flat; ++d) {
                     total_acc = fmaf(Krow[d], Xf[d], total_acc);
                     FLOP(2); // 1 FMA (i.e. 2 flops => 1 mul and 1 add)
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
                 outb[ oc*I + i_out ] = total_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -585,6 +674,17 @@ void optimized_linear_v7_avx_k_accum(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      // input‐features per sample
     const int n_flat = C_out * I;     // output‐features per sample
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K       = NULL;
@@ -623,6 +723,7 @@ void optimized_linear_v7_avx_k_accum(
                 if (L->bias) {
                     total_acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 } else {
                     total_acc = 0.0f;
                 }
@@ -641,11 +742,13 @@ void optimized_linear_v7_avx_k_accum(
                     __m256 x_chunk0 = _mm256_load_ps(Xf + d);
                     vec_acc0 = _mm256_fmadd_ps(k_chunk0, x_chunk0, vec_acc0);
                     FLOP(16);
+                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
 
                     __m256 k_chunk1 = _mm256_load_ps(Krow + d + 8); 
                     __m256 x_chunk1 = _mm256_load_ps(Xf + d + 8);
                     vec_acc1 = _mm256_fmadd_ps(k_chunk1, x_chunk1, vec_acc1);
                     FLOP(16);
+                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
                 }
                 
                 // Handle remaining AVX vector if d_flat was not a multiple of 16 but >= 8
@@ -654,6 +757,7 @@ void optimized_linear_v7_avx_k_accum(
                      __m256 x_chunk = _mm256_load_ps(Xf + d);
                      vec_acc0 = _mm256_fmadd_ps(k_chunk, x_chunk, vec_acc0); // Add to vec_acc0
                      FLOP(16);
+                     // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
                      d += 8;
                 }
 
@@ -672,9 +776,11 @@ void optimized_linear_v7_avx_k_accum(
                 for (; d < d_flat; ++d) {
                     total_acc = fmaf(Krow[d], Xf[d], total_acc);
                     FLOP(2); 
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
 
                 outb[ oc*I + i_out ] = total_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -692,6 +798,17 @@ void optimized_linear_v8_avx_more_unroll(
     const int C_out  = L->out_channels;
     const int d_flat = C_in * I;      
     const int n_flat = C_out * I;     
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     static float *K       = NULL;
     static int    last_sz = 0;
@@ -726,6 +843,7 @@ void optimized_linear_v8_avx_more_unroll(
                 if (L->bias) {
                     total_acc = L->bias[r];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 } else {
                     total_acc = 0.0f;
                 }
@@ -744,6 +862,7 @@ void optimized_linear_v8_avx_more_unroll(
                     vec_acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  8), _mm256_loadu_ps(Xf + d +  8), vec_acc1); FLOP(16);
                     vec_acc2 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d + 16), _mm256_loadu_ps(Xf + d + 16), vec_acc2); FLOP(16);
                     vec_acc3 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d + 24), _mm256_loadu_ps(Xf + d + 24), vec_acc3); FLOP(16);
+                    // BYTES_READ(sizeof(float) * 64); // 32 from Krow, 32 from Xf
                 }
 
                 // Handling the remaining vectors
@@ -751,6 +870,7 @@ void optimized_linear_v8_avx_more_unroll(
                 if (d < limit_unroll16) {
                     vec_acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  0), _mm256_loadu_ps(Xf + d +  0), vec_acc0); FLOP(16);
                     vec_acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  8), _mm256_loadu_ps(Xf + d +  8), vec_acc1); FLOP(16);
+                    // BYTES_READ(sizeof(float) * 32); // 16 from Krow, 16 from Xf
                     
                     d += 16;
                 }
@@ -758,6 +878,7 @@ void optimized_linear_v8_avx_more_unroll(
                 int limit_unroll8 = (limit_d_total / 8) * 8;
                 if (d < limit_unroll8) {
                     vec_acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  0), _mm256_loadu_ps(Xf + d +  0), vec_acc0); FLOP(16);
+                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
                     d += 8;
                 }
                 
@@ -782,9 +903,11 @@ void optimized_linear_v8_avx_more_unroll(
                 for (; d < limit_d_total; ++d) { 
                     total_acc = fmaf(Krow[d], Xf[d], total_acc);
                     FLOP(2); 
+                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
                 }
 
                 outb[ oc*I + i_out ] = total_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -804,6 +927,17 @@ void optimized_linear_v9_scalar_no_xf(
     
     const int K_cols = C_in * I_in; 
     const int K_rows = C_out * I_out;
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I_in * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I_out * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     // 1) Build & cache the Clifford-kernel once
     static float *K_kernel = NULL;
@@ -835,6 +969,7 @@ void optimized_linear_v9_scalar_no_xf(
                 if (L->bias) {
                     final_acc = L->bias[K_row_idx];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 }
 
                 const float *K_row_ptr = K_kernel + (size_t)K_row_idx * K_cols;
@@ -858,6 +993,7 @@ void optimized_linear_v9_scalar_no_xf(
                         acc_blade_sum2 = fmaf(K_row_ptr[(i_in_blade+2)*C_in + ic_in], x_channel_ptr[i_in_blade+2], acc_blade_sum2);
                         acc_blade_sum3 = fmaf(K_row_ptr[(i_in_blade+3)*C_in + ic_in], x_channel_ptr[i_in_blade+3], acc_blade_sum3);
                         FLOP(8); // 4 FMAs, so 4 muls and 4 adds
+                        // BYTES_READ(sizeof(float) * 8); // 4 from K_row_ptr, 4 from x_channel_ptr
                     }
                     
                     float total_blade_sum_for_channel = acc_blade_sum0 + acc_blade_sum1 + acc_blade_sum2 + acc_blade_sum3;
@@ -866,6 +1002,7 @@ void optimized_linear_v9_scalar_no_xf(
                     for (; i_in_blade < I_in; ++i_in_blade) {
                         total_blade_sum_for_channel = fmaf(K_row_ptr[i_in_blade*C_in + ic_in], x_channel_ptr[i_in_blade], total_blade_sum_for_channel);
                         FLOP(2); // 1 fma
+                        // BYTES_READ(sizeof(float) * 2); // 1 from K_row_ptr, 1 from x_channel_ptr
                     }
                     final_acc += total_blade_sum_for_channel;
                     FLOP(1);
@@ -873,6 +1010,7 @@ void optimized_linear_v9_scalar_no_xf(
                 
                 // Write to output: out[b*(C_out*I_out) + oc_out*I_out + i_out_blade]
                 out_batch_ptr[oc_out * I_out + i_out_blade] = final_acc;
+                BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -892,6 +1030,17 @@ void optimized_linear_v10_avx_no_xf(
     
     const int K_cols = C_in * I_in; 
     const int K_rows = C_out * I_out;
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I_in * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I_out * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     static float *K_kernel = NULL;
     static int    last_sz_K = 0;
@@ -923,6 +1072,7 @@ void optimized_linear_v10_avx_no_xf(
                 if (L->bias) {
                     final_acc = L->bias[K_row_idx];
                     FLOP(1);
+                    // BYTES_READ(sizeof(float));
                 }
                 const float *K_row_ptr = K_kernel + (size_t)K_row_idx * K_cols;
 
@@ -946,6 +1096,7 @@ void optimized_linear_v10_avx_no_xf(
                         __m256 k_vec = _mm256_i32gather_ps(K_row_ptr, k_indices_vec, 1);
                         vec_acc_blades = _mm256_fmadd_ps(k_vec, x_vec, vec_acc_blades);
                         FLOP(16);
+                        // BYTES_READ(sizeof(float) * 16); // 8 from K_row_ptr (via gather), 8 from x_channel_ptr
                     }
                     
                     //horizontally sum across the acc blades
@@ -956,12 +1107,14 @@ void optimized_linear_v10_avx_no_xf(
                     for (; i_in_blade < I_in; ++i_in_blade) {
                         total_blade_sum_for_channel = fmaf(K_row_ptr[i_in_blade*C_in + ic_in], x_channel_ptr[i_in_blade], total_blade_sum_for_channel);
                         FLOP(2); 
+                        // BYTES_READ(sizeof(float) * 2); // 1 from K_row_ptr, 1 from x_channel_ptr
                     }
 
                     final_acc += total_blade_sum_for_channel;
                     FLOP(1);
                 }
                 out_batch_ptr[oc_out * I_out + i_out_blade] = final_acc;
+                // BYTES_WRITTEN(sizeof(float));
             }
         }
     }
@@ -974,7 +1127,7 @@ void register_linear_functions() {
     add_linear_function(optimized_linear_v3, "optimized_v3_fma_k_accum");
     add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
     
-    // add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak");
+    add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak");
     add_linear_function(optimized_linear_v6_avx, "optimized_v6_avx");
     add_linear_function(optimized_linear_v7_avx_k_accum, "optimized_v7_avx_k_accum");
     add_linear_function(optimized_linear_v8_avx_more_unroll, "optimized_v8_avx_more_unroll");

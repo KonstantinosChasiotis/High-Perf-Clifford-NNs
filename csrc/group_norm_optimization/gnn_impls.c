@@ -67,6 +67,37 @@ static void  baseline_groupnorm(
     float        *x_norm
 ){
 
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * _I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = _I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = _I * _I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        // These will be updated, so also count as written
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = _I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = _I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * _I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     //basic constants
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -405,6 +436,37 @@ static void optimized_groupnorm_v0(
     float         eps,
     float        *x_norm
 ) {
+
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        // These will be updated, so also count as written
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -752,6 +814,36 @@ static void optimized_groupnorm_v1(
     float        *x_norm
 ) {
 
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
     
@@ -1026,6 +1118,36 @@ static void optimized_groupnorm_v2(
     float        *x_norm
 ) {
 
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
     
@@ -1286,6 +1408,36 @@ static void optimized_groupnorm_v3(
     float        *x_norm
 ) {
 
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
     
@@ -1538,6 +1690,36 @@ static void optimized_groupnorm_v4(
     float         eps,
     float        *x_norm
 ) {
+
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -1848,6 +2030,36 @@ static void optimized_groupnorm_v5(
     float         eps,
     float        *x_norm
 ) {
+
+    // Track bytes for input data
+    size_t input_bytes = B * C * D * I * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for running mean and covariance if used
+    if (running) {
+        size_t running_mean_bytes = I * (C / num_groups) * sizeof(float);
+        size_t running_cov_bytes = I * I * (C / num_groups) * sizeof(float);
+        BYTES_READ(running_mean_bytes);
+        BYTES_READ(running_cov_bytes);
+        BYTES_WRITTEN(running_mean_bytes);
+        BYTES_WRITTEN(running_cov_bytes);
+    }
+    
+    // Track bytes for weight and bias if used
+    if (scaling) {
+        if (weight_orig) {
+            size_t weight_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(weight_bytes);
+        }
+        if (bias_orig) {
+            size_t bias_bytes = I * (C / num_groups) * sizeof(float);
+            BYTES_READ(bias_bytes);
+        }
+    }
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * D * I * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;

@@ -90,7 +90,7 @@ def plot_performance(csv_file, title, out_name):
         loc="center",
         pad=20
     )
-    ax.set_ylabel("FLOPs per cycle", fontsize=12)
+    ax.set_ylabel("FLOPs per cycle", fontsize=12, rotation='horizontal', ha='right')
 
     plt.subplots_adjust(bottom=0.15, right=0.95, top=0.85) # Adjusted margins
     plt.savefig(out_name, dpi=300,

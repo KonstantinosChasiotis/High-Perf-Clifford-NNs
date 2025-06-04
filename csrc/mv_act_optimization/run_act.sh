@@ -46,7 +46,7 @@ for idx in $(seq 0 $((FUNC_COUNT-1))); do
 
   # header for this function
   echo "$NAME"              >> "$CSV"
-  echo "batch,cycles,flops" >> "$CSV"
+  echo "batch,cycles,flops,bytes_read,bytes_written" >> "$CSV"
 
   for B in "${BATCHES[@]}"; do
     # console progress

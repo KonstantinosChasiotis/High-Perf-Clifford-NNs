@@ -23,6 +23,26 @@ static void baseline_act(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+    
     mv_act_forward(
       x, B, C, I_in, I_full,
       input_blades, weight, K,
@@ -43,6 +63,25 @@ static void optimized_act_v0(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
 
     size_t Vsize = (size_t)B * C * I_full;
     float *v = malloc(Vsize * sizeof(float));
@@ -63,15 +102,15 @@ static void optimized_act_v0(
       for (int c = 0; c < C; ++c) {
         float acc = bias[c];
         const float *w = weight + (size_t)c * K;
-        //FLOP(2);
+        FLOP(2);
         size_t vc = (size_t)b*C*I_full + c*I_full;
         for (int k = 0; k < K; ++k) {
           int blade = kernel_blades[k];
           acc += w[k] * v[vc + blade];
-          //FLOP(2);
+          FLOP(2);
         }
         gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-        //FLOP(4);
+        FLOP(4);
       }
     }
 
@@ -82,7 +121,7 @@ static void optimized_act_v0(
         size_t xo = (size_t)b*C*I_in  + c*I_in;
         for (int i = 0; i < I_in; ++i) {
           out[xo + i] = v[vc + input_blades[i]] * g;
-          //FLOP(1);
+          FLOP(1);
         }
       }
     }
@@ -123,6 +162,26 @@ void optimized_act_v1(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     // ----------------------------------------------------------------------
     // 1) Build inverse map: blade_index → position in x (or -1 if unused)
     //    - Allocate an array of length I_full
@@ -170,14 +229,14 @@ void optimized_act_v1(
                 if (xi >= 0) {
                     // valid input position: accumulate weighted x
                     acc += weight[baseW + k] * x[baseX + xi];
-                    //FLOP(2): multiply + add
+                    FLOP(2); // multiply + add
                 }
                 // if xi < 0: skip unused blade (contribution = 0)
             }
 
             // Apply sigmoid activation: gate = 1 / (1 + exp(-acc))
             gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-            //FLOP(4): exp + add + reciprocal + misc
+            FLOP(4); // exp + add + reciprocal + misc (project convention)
         }
     }
 
@@ -193,6 +252,7 @@ void optimized_act_v1(
             for (int i = 0; i < I_in; ++i) {
                 // One FLOP: multiply
                 out[baseX + i] = x[baseX + i] * g;
+                FLOP(1);
             }
         }
     }
@@ -220,6 +280,26 @@ void optimized_act_v2(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     // 1) Build inverse‐index map: blade → input index (or –1 if unused)
     int *inv = malloc(I_full * sizeof *inv);
     for (int i = 0; i < I_full; ++i) {
@@ -251,13 +331,13 @@ void optimized_act_v2(
                 int xi    = (blade >= 0 && blade < I_full) ? inv[blade] : -1;
                 if (xi >= 0) {
                     acc += weight[baseW + k] * x[xoff + xi];
-                    //FLOP(2);    // one multiply + one add
+                    FLOP(2);    // one multiply + one add
                 }
             }
 
             // sigmoid activation
             gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-            //FLOP(4);        // exp + add + divide + misc
+            FLOP(4);        // exp + add + divide + misc (project convention)
         }
     }
 
@@ -272,7 +352,7 @@ void optimized_act_v2(
 
             for (int i = 0; i < I_in; ++i) {
                 out[xoff + i] = x[xoff + i] * g;
-                //FLOP(1);    // one multiply
+                FLOP(1);    // one multiply
             }
         }
     }
@@ -322,6 +402,26 @@ void optimized_act_v5(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     // ----------------------------------------------------------------------
     // 1) Build inverse map: blade index → input slot (or -1 if unused)
     int *inv = malloc((size_t)I_full * sizeof *inv);
@@ -381,14 +481,17 @@ void optimized_act_v5(
             for (int j = 0; j < vc; ++j) {
                 int idx = valid_idx[j];
                 acc += valid_weight[j] * x_bc[idx];
+                FLOP(2); // multiply + add
             }
 
             // Apply sigmoid activation
             float gate = 1.0f / (1.0f + expf(-acc));
+            FLOP(4); // project convention
 
             // Scale and store outputs for each active input
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * gate;
+                FLOP(1); // multiply
             }
         }
     }
@@ -412,8 +515,8 @@ void optimized_act_v5(
  * optimized_act_v6
  *
  * Incorporates fmaf-based fused activation using precomputed valid indices
- * and weights per channel, minimizing arithmetic in hot loops. Inspired by v3’s
- * k_idx/x_idx concept and v5’s valid_weight array.
+ * and weights per channel, minimizing arithmetic in hot loops. Inspired by v3's
+ * k_idx/x_idx concept and v5's valid_weight array.
  *
  * Arguments:
  *   x             - input tensor [B][C][I_in]
@@ -444,6 +547,26 @@ void optimized_act_v6(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     // 1) Build inverse map: blade index → input slot
     int *inv = malloc((size_t)I_full * sizeof *inv);
     if (!inv) return;
@@ -495,14 +618,17 @@ void optimized_act_v6(
             float acc = bval;
             for (int j = 0; j < vc; ++j) {
                 acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                FLOP(2); // FMA = 1 mul + 1 add
             }
 
             // sigmoid activation
             float g = 1.0f / (1.0f + expf(-acc));
+            FLOP(4); // project convention
 
             // scale and store
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * g;
+                FLOP(1); // multiply
             }
         }
     }
@@ -557,9 +683,11 @@ static int   lut_initialized = 0;
 static void init_sigmoid_lut(void) {
     const float x_min = -6.0f;
     const float x_max =  6.0f;
+    // Precompute for x calculation: (x_max - x_min) / (SIGMOID_LUT_SIZE - 1)
+    const float scale_factor_x = (x_max - x_min) / (SIGMOID_LUT_SIZE - 1); FLOP(2); // 1 sub, 1 div (assuming SIGMOID_LUT_SIZE -1 is const)
     for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
-        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
-        sigmoid_lut[i] = 1.0f / (1.0f + expf(-x));
+        float x = x_min + scale_factor_x * i; FLOP(2); // 1 mul, 1 add (i to float implicit)
+        sigmoid_lut[i] = 1.0f / (1.0f + expf(-x)); FLOP(4); // project convention
     }
     lut_initialized = 1;
 }
@@ -571,12 +699,22 @@ static void init_sigmoid_lut(void) {
 static inline float fast_sigmoid(float x) {
     if (!lut_initialized) init_sigmoid_lut();
     const float x_min = -6.0f, x_max = 6.0f; ///here we reduced the size to 6.0f from 8.0 it dosen't affect but maybe with other inputs
-    if (x <= x_min) return 0.0f;
-    if (x >= x_max) return 1.0f;
-    float fx   = (x - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    if (x <= x_min) return 0.0f; // No FLOPs for comparison if not counted
+    if (x >= x_max) return 1.0f; // No FLOPs for comparison
+    // Precompute: (SIGMOID_LUT_SIZE - 1) / (x_max - x_min)
+    const float scale_factor_interp = (SIGMOID_LUT_SIZE - 1) / (x_max - x_min); // Assuming this is optimized out or precomputed for fast_sigmoid if called often
+                                                                               // If counted each time: FLOP(2) here.
+                                                                               // If not, add FLOP(2) here. Given it's inline and might be in a hot loop, it's better if this is const.
+                                                                               // For init_sigmoid_lut, it makes sense to calculate it once.
+                                                                               // Let's assume for this specific call, (SIGMOID_LUT_SIZE - 1) / (x_max - x_min) is a known constant.
+    float fx   = (x - x_min) * scale_factor_interp; FLOP(2); // 1 sub, 1 mul
     int   idx  = (int)fx;
-    float frac = fx - idx;
-    return sigmoid_lut[idx] + frac * (sigmoid_lut[idx+1] - sigmoid_lut[idx]);
+    float frac = fx - idx; FLOP(1); // 1 sub
+    // Linear interpolation: sigmoid_lut[idx] + frac * (sigmoid_lut[idx+1] - sigmoid_lut[idx])
+    // val_diff = sigmoid_lut[idx+1] - sigmoid_lut[idx] -> 1 sub
+    // term = frac * val_diff -> 1 mul
+    // result = sigmoid_lut[idx] + term -> 1 add
+    return sigmoid_lut[idx] + frac * (sigmoid_lut[idx+1] - sigmoid_lut[idx]); FLOP(3); // 1 sub, 1 mul, 1 add
 }
 
 // ------------------------------------------------------------
@@ -596,6 +734,26 @@ void optimized_act_v7(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes for input data
+    size_t input_bytes = B * C * I_in * sizeof(float);
+    BYTES_READ(input_bytes);
+    
+    // Track bytes for input_blades and kernel_blades
+    size_t input_blades_bytes = I_in * sizeof(int);
+    size_t kernel_blades_bytes = K * sizeof(int);
+    BYTES_READ(input_blades_bytes);
+    BYTES_READ(kernel_blades_bytes);
+    
+    // Track bytes for weight and bias
+    size_t weight_bytes = C * K * sizeof(float);
+    size_t bias_bytes = C * sizeof(float);
+    BYTES_READ(weight_bytes);
+    BYTES_READ(bias_bytes);
+    
+    // Track bytes for output data
+    size_t output_bytes = B * C * I_in * sizeof(float);
+    BYTES_WRITTEN(output_bytes);
+
     // 1) Build inverse map
     int *inv = malloc((size_t)I_full * sizeof *inv);
     if (!inv) return;
@@ -635,16 +793,19 @@ void optimized_act_v7(
         int    *idxs = valid_idx    + (size_t)c * K;
         float  *wts  = valid_weight + (size_t)c * K;
         float   bval = bias[c];
+
         for (int b = 0; b < B; ++b) {
             const float *x_bc = x   + (size_t)b * stride + (size_t)c * I_in;
             float       *o_bc = out + (size_t)b * stride + (size_t)c * I_in;
             float acc = bval;
             for (int j = 0; j < vc; ++j) {
                 acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                FLOP(2); // FMA
             }
-            float g = fast_sigmoid(acc);
+            float g = fast_sigmoid(acc); FLOP(6); // From fast_sigmoid: 2 (fx) + 1 (frac) + 3 (lerp)
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * g;
+                FLOP(1); // multiply
             }
         }
     }
