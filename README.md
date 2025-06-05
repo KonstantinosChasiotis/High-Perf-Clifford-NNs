@@ -160,8 +160,14 @@ Plotting scripts expect:
 
 
 ## 📝 To-Dos
+### Week 06.05 - 13.05
+- [ ] Write a bash script to just run all the performance + roofline plots
+- [ ] (SIGMOID) Analyize performance dip with increasing batch size
+- [ ] (LINEAR) Implement the direct kernels for 3D (via e.g. indexing/lookup)
+- [ ] (REPORT) Set-up the overleaf template, write a report following report guidelines
+- [ ] Update Project Server notes
 
-### PRESENTATION WEEK 02.05: 
+### PRESENTATION WEEK 06.05: 
 - [X] All: presentation prep -- SHOULD WRITE SLIDE ABOUT OWN IMPLEMENTATION 
 - [X] Kons : OPEN TO HELP 
 - [X] Kons or Mikke : do final plotting
