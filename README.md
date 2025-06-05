@@ -162,22 +162,22 @@ Plotting scripts expect:
 ## 📝 To-Dos
 
 ### PRESENTATION WEEK 02.05: 
-- [ ] All: presentation prep -- SHOULD WRITE SLIDE ABOUT OWN IMPLEMENTATION 
-- [ ] Kons : OPEN TO HELP 
-- [ ] Kons or Mikke : do final plotting
-- [ ] Mikke : clean repo 
-- [ ] Mikke : csv on who wrote what (actual implementation as TA asked)
-- [ ] Arnie : do roofline plotting and calculations for every layer (say if need to be executed on main computer )
-- [ ] Simon : AVX implementation for groupnorm
+- [X] All: presentation prep -- SHOULD WRITE SLIDE ABOUT OWN IMPLEMENTATION 
+- [X] Kons : OPEN TO HELP 
+- [X] Kons or Mikke : do final plotting
+- [X] Mikke : clean repo 
+- [X] Mikke : csv on who wrote what (actual implementation as TA asked)
+- [X] Arnie : do roofline plotting and calculations for every layer (say if need to be executed on main computer )
+- [X] Simon : AVX implementation for groupnorm
 
 ### WEEK 25.05 - 31.05:
-- [ ] Arnie: finish the optimizations for the linear layer (do you consider memory ?)
-- [ ] Arnie: have the papi library figured out so that can decide if byte transferred is gonne be analytically done or automatic
-- [ ] Mikke, Kons: trying potential optimization for the activation layer 
-- [ ] Mikke, Kons: figue out AVX opt
-- [ ] Mikke, Kons : figure out to measure the cache misses 
-- [ ] Mikke : drafzt of the presentation (based on previous presentations) 
-- [ ] Simon : trying potential optimization for the groupnorm layer  (fuse the loops and do computation like transppose in one go)
+- [X] Arnie: finish the optimizations for the linear layer (do you consider memory ?)
+- [X] Arnie: have the papi library figured out so that can decide if byte transferred is gonne be analytically done or automatic
+- [X] Mikke, Kons: trying potential optimization for the activation layer 
+- [X] Mikke, Kons: figue out AVX opt
+- [X] Mikke, Kons : figure out to measure the cache misses 
+- [X] Mikke : drafzt of the presentation (based on previous presentations) 
+- [X] Simon : trying potential optimization for the groupnorm layer  (fuse the loops and do computation like transppose in one go)
 
 ### WEEK 19.05 - 25.05:
 - [X] All : Prepare presentation for meeting 20-30 slides
@@ -247,10 +247,10 @@ Plotting scripts expect:
 ---
 
 ### Benchmarking and plots (Kons, Arnie)
-- [ ] Performance: Kons already has  
+- [X] Performance: Kons already has  
 - [X] Roofline: Arnie – take the CSV and do the plotting  
-- [ ] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
-- [ ] Need to decide what’s in cache and what’s in memory ->  -> using special PAPI mem-access library
+- [X] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
+- [X] Need to decide what’s in cache and what’s in memory ->  -> using special PAPI mem-access library
 
 ---
 
