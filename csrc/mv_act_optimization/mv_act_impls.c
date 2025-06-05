@@ -658,9 +658,6 @@ void optimized_act_v7(
 
 
 
-
-
-
 void register_activation_functions(void) {
     add_activation_function(baseline_act,      "baseline_act");
     add_activation_function(optimized_act_v1,  "optimized_act_v1");
