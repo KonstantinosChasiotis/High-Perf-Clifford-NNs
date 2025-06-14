@@ -21,9 +21,10 @@ if [ $# -lt 1 ]; then
 fi
 
 MODE=$1
-DIM=2
+DIM=1
 CHANNELS=16
-BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384)
+BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384 32768)
+# BATCHES=(1)
 CSV=baseline_perfplot_linear.csv
 
 if [ "$MODE" = "0" ]; then
