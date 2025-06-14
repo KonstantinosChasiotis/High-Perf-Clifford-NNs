@@ -63,15 +63,15 @@ static void optimized_act_v0(
       for (int c = 0; c < C; ++c) {
         float acc = bias[c];
         const float *w = weight + (size_t)c * K;
-        //FLOP(2);
+        FLOP(2);
         size_t vc = (size_t)b*C*I_full + c*I_full;
         for (int k = 0; k < K; ++k) {
           int blade = kernel_blades[k];
           acc += w[k] * v[vc + blade];
-          //FLOP(2);
+          FLOP(2);
         }
         gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-        //FLOP(4);
+        FLOP(4);
       }
     }
 
@@ -82,7 +82,7 @@ static void optimized_act_v0(
         size_t xo = (size_t)b*C*I_in  + c*I_in;
         for (int i = 0; i < I_in; ++i) {
           out[xo + i] = v[vc + input_blades[i]] * g;
-          //FLOP(1);
+          FLOP(1);
         }
       }
     }
@@ -170,14 +170,14 @@ void optimized_act_v1(
                 if (xi >= 0) {
                     // valid input position: accumulate weighted x
                     acc += weight[baseW + k] * x[baseX + xi];
-                    //FLOP(2): multiply + add
+                    FLOP(2); // multiply + add
                 }
                 // if xi < 0: skip unused blade (contribution = 0)
             }
 
             // Apply sigmoid activation: gate = 1 / (1 + exp(-acc))
             gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-            //FLOP(4): exp + add + reciprocal + misc
+            FLOP(4); // exp + add + reciprocal + misc
         }
     }
 
@@ -251,13 +251,13 @@ void optimized_act_v2(
                 int xi    = (blade >= 0 && blade < I_full) ? inv[blade] : -1;
                 if (xi >= 0) {
                     acc += weight[baseW + k] * x[xoff + xi];
-                    //FLOP(2);    // one multiply + one add
+                    FLOP(2);    // one multiply + one add
                 }
             }
 
             // sigmoid activation
             gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-            //FLOP(4);        // exp + add + divide + misc
+            FLOP(4);        // exp + add + divide + misc
         }
     }
 
@@ -272,7 +272,7 @@ void optimized_act_v2(
 
             for (int i = 0; i < I_in; ++i) {
                 out[xoff + i] = x[xoff + i] * g;
-                //FLOP(1);    // one multiply
+                FLOP(1);    // one multiply
             }
         }
     }
@@ -378,17 +378,21 @@ void optimized_act_v5(
 
             // Compute dot-product over valid entries
             float acc = bias[c];  // start from bias
+            FLOP(2);
             for (int j = 0; j < vc; ++j) {
                 int idx = valid_idx[j];
                 acc += valid_weight[j] * x_bc[idx];
+                FLOP(2);
             }
 
             // Apply sigmoid activation
             float gate = 1.0f / (1.0f + expf(-acc));
+            FLOP(4);
 
             // Scale and store outputs for each active input
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * gate;
+                FLOP(1);
             }
         }
     }
@@ -399,7 +403,6 @@ void optimized_act_v5(
     free(valid_weight);
     free(inv);
 }
-
 
 
 
@@ -493,16 +496,20 @@ void optimized_act_v6(
 
             // dot-product using fused multiply-add
             float acc = bval;
+            FLOP(2);
             for (int j = 0; j < vc; ++j) {
                 acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                FLOP(2);
             }
 
             // sigmoid activation
             float g = 1.0f / (1.0f + expf(-acc));
+            FLOP(4);
 
             // scale and store
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * g;
+                FLOP(1);
             }
         }
     }
@@ -520,7 +527,7 @@ void optimized_act_v6(
 
 
 /*
- * optimized_act_v8
+ * optimized_act_v7
  *
  * Fused activation with LUT-based sigmoid using a reduced range and size
  * for improved cache locality. LUT initialization samples [-6,6] instead of [-8,8],
@@ -544,43 +551,48 @@ void optimized_act_v6(
 #include <math.h>
 
 // ------------------------------------------------------------
-// Sigmoid LUT parameters and storage (half-size, tighter range)
+// Sigmoid lookup table parameters and storage (half-size, tighter range)
 // ------------------------------------------------------------
-#define SIGMOID_LUT_SIZE 512      // Reduced table size for better cache
-static float sigmoid_lut[SIGMOID_LUT_SIZE];
-static int   lut_initialized = 0;
+#define SIGMOID_LOOKUP_TABLE_SIZE 512      // Reduced table size for better cache
+static float sigmoid_lookup_table[SIGMOID_LOOKUP_TABLE_SIZE];
+static int   lookup_table_initialized = 0;
 
 // ------------------------------------------------------------
-// init_sigmoid_lut
-// One-time initialization of the sigmoid LUT over [-6,6]
+// init_sigmoid_lookup_table
+// One-time initialization of the sigmoid lookup table over [-6,6]
 // ------------------------------------------------------------
-static void init_sigmoid_lut(void) {
+static void init_sigmoid_lookup_table(void) {
     const float x_min = -6.0f;
     const float x_max =  6.0f;
-    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
-        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
-        sigmoid_lut[i] = 1.0f / (1.0f + expf(-x));
+    for (int i = 0; i < SIGMOID_LOOKUP_TABLE_SIZE; ++i) {
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LOOKUP_TABLE_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x calculation
+        sigmoid_lookup_table[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
     }
-    lut_initialized = 1;
+    lookup_table_initialized = 1;
 }
 
 // ------------------------------------------------------------
 // fast_sigmoid
-// Lookup + interpolation over reduced-range LUT
+// Lookup + interpolation over reduced-range lookup table
 // ------------------------------------------------------------
 static inline float fast_sigmoid(float x) {
-    if (!lut_initialized) init_sigmoid_lut();
-    const float x_min = -6.0f, x_max = 6.0f; ///here we reduced the size to 6.0f from 8.0 it dosen't affect but maybe with other inputs
+    if (!lookup_table_initialized) init_sigmoid_lookup_table();
+    const float x_min = -6.0f, x_max = 6.0f;
     if (x <= x_min) return 0.0f;
     if (x >= x_max) return 1.0f;
-    float fx   = (x - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    float fx   = (x - x_min) * (SIGMOID_LOOKUP_TABLE_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for fx calculation
     int   idx  = (int)fx;
     float frac = fx - idx;
-    return sigmoid_lut[idx] + frac * (sigmoid_lut[idx+1] - sigmoid_lut[idx]);
+    FLOP(1); // sub for frac
+    FLOP(3); // sub, mul, add for interpolation (lookup_table[idx+1]-lookup_table[idx], *frac, + base)
+    return sigmoid_lookup_table[idx] + frac * (sigmoid_lookup_table[idx+1] - sigmoid_lookup_table[idx]);
 }
 
 // ------------------------------------------------------------
-// optimized_act_v8
+// optimized_act_v7
 // Main fused activation kernel with optimized LUT
 // ------------------------------------------------------------
 void optimized_act_v7(
@@ -629,7 +641,7 @@ void optimized_act_v7(
     // 3) Stride per batch slice
     size_t stride = (size_t)C * I_in;
 
-    // 4) Fused loop: dot, LUT sigmoid, write-back
+    // 4) Fused loop: dot, lookup table sigmoid, write-back
     for (int c = 0; c < C; ++c) {
         int     vc   = valid_count[c];
         int    *idxs = valid_idx    + (size_t)c * K;
@@ -639,12 +651,16 @@ void optimized_act_v7(
             const float *x_bc = x   + (size_t)b * stride + (size_t)c * I_in;
             float       *o_bc = out + (size_t)b * stride + (size_t)c * I_in;
             float acc = bval;
+            FLOP(2);
             for (int j = 0; j < vc; ++j) {
                 acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                FLOP(2);
             }
             float g = fast_sigmoid(acc);
+            FLOP(4);
             for (int i = 0; i < I_in; ++i) {
                 o_bc[i] = x_bc[i] * g;
+                FLOP(1);
             }
         }
     }
@@ -652,7 +668,6 @@ void optimized_act_v7(
     // 5) Cleanup
     free(valid_idx); free(valid_weight); free(valid_count);
 }
-
 
 
 
