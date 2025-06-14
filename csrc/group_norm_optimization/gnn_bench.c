@@ -138,11 +138,15 @@ double benchmark_groupnorm_by_index(int idx, int B)
 
 static int outputs_match(const float *a, const float *b, size_t n)
 {
-    for (size_t i = 0; i < n; ++i)
-        if (fabsf(a[i] - b[i]) > EPSILON){
+    for (size_t i = 0; i < n; ++i){
+        if (fabsf(a[i] - b[i]) > EPSILON || 
+            (isnan(a[i]) && !isnan(b[i]))||
+            (!isnan(a[i]) && isnan(b[i]))
+            ){
             printf("missmatch at: %ld , %f, %f\n", i, a[i], b[i]);
             return 0;
         }
+    }
     return 1;
 }
 
