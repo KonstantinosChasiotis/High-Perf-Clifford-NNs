@@ -5455,6 +5455,88 @@ static void optimized_groupnorm_v14(
     assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
 
     //mean
+    int mean_size = dim0 * I;
+    for (int i = 0; i < mean_size; i++){
+        gn_mean_temp[i] = 0.0f;
+    }
+    
+    for(int i = 0; i < dim0; i++){
+        //calc mean
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < I; l++){ //COST: dim0*num_groups*D*I = B*C*D*I flops
+                    gn_mean_temp[i*I + l] += x[i*num_groups*D*I + j*D*I + k*I + l];
+                }
+            }
+        }
+    }
+    for(int i = 0; i < dim0; i++){
+        for(int l = 0; l < I; l++){ //COST: dim0*I
+            FLOP(1);
+            gn_mean_temp[i*I + l] /= (D*num_groups);
+        }
+    }
+    
+
+    //subtract mean form x
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < I; l++){
+                    FLOP(1);
+                    x_norm[i*num_groups*D*I + j*D*I + k*I + l] = x[i*num_groups*D*I + j*D*I + k*I + l] - gn_mean_temp[i*I + l];
+                }
+            }
+        }
+    }
+
+    //permute: dim0, num_groups, D, I -> dim0, I, num_groups, D
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*I*num_groups*D + l*num_groups*D + j*D +k] = x_norm[i*num_groups*D*I + j*D*I + k*I + l];
+                }
+            }
+        }
+    }
+
+    //calc cov
+    int cov_size = dim0*I*I;
+    for (int i = 0; i < cov_size; i++){
+        gn_cov_temp[i] = 0.0f;
+    }
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            for(int l = 0; l < I; l++){ //col selector
+                for(int k = 0; k < num_groups*D; k++){
+                    FLOP(1);
+                    FLOP(1);
+                    gn_cov_temp[i*I*I + j*I + l] += gn_X_temp[i*I*num_groups*D + j*num_groups*D + k]* x_norm[i*num_groups*D*I + k*I + l];
+    }}}}
+    //scale all of cov
+    for(int i = 0; i < cov_size; i++){
+        FLOP(1);
+        gn_cov_temp[i] /= (num_groups * D);
+    }
+
+    //get max for each groups cov matrix
+    for(int i = 0; i < dim0; i++){
+        gn_max_temp[i] = gn_cov_temp[i*I*I];
+        for(int j = 1; j < I*I; j++){
+            gn_max_temp[i] = gn_cov_temp[i*I*I + j] > gn_max_temp[i] ? gn_cov_temp[i*I*I + j] : gn_max_temp[i];
+        }
+    }
+
+    //add pertubation to diagonal
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){
+            FLOP(2);
+            gn_cov_temp[i*I*I + j*I + j] += gn_max_temp[i]*eps;
+    }}
+
+    /*
+    //mean
     __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         //calc mean
@@ -5500,6 +5582,8 @@ static void optimized_groupnorm_v14(
         }
     }
 
+    
+    //does not work
     //calc cov
     __m256 cov_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
@@ -5543,7 +5627,6 @@ static void optimized_groupnorm_v14(
             accum2 = _mm256_add_ps(accum2, accum3);
             FLOP(8);
             accum0 = _mm256_add_ps(accum0, accum2);
-            FLOP(8);
             __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
             FLOP(8);
             accum0 = _mm256_add_ps(accum0, accum0_high);
@@ -5553,6 +5636,7 @@ static void optimized_groupnorm_v14(
             _mm_storeu_ps(&gn_cov_temp[i*I*I + j*I], accum0_128);
         }
     }
+    
 
     //get max for each groups cov matrix
     for(int i = 0; i < dim0; i++){
@@ -5568,6 +5652,7 @@ static void optimized_groupnorm_v14(
             FLOP(2);
             gn_cov_temp[i*I*I + j*I + j] += gn_max_temp[i]*eps;
     }}
+    */
 
     /*
     //correct but looks like its slower
@@ -8424,6 +8509,7 @@ static void optimized_groupnorm_all_dim(
 void register_groupnorm_functions(void) {
     add_groupnorm_function(baseline_groupnorm,      "baseline_groupnorm");
     add_groupnorm_function(optimized_groupnorm_v0,  "optimized_groupnorm_v0"); //invert diag back sub
+    /*
     add_groupnorm_function(optimized_groupnorm_v1,  "optimized_groupnorm_v1"); //mean vectorized
     add_groupnorm_function(optimized_groupnorm_v2,  "optimized_groupnorm_v2"); //cov vectorized
     add_groupnorm_function(optimized_groupnorm_v3,  "optimized_groupnorm_v3"); //max permute temp vars
@@ -8432,17 +8518,20 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v6,  "optimized_groupnorm_v6"); //8 accumulators for cov
     add_groupnorm_function(optimized_groupnorm_v7,  "optimized_groupnorm_v7"); //avx for cholesky decomp
     //add_groupnorm_function(optimized_groupnorm_v8,  "optimized_groupnorm_v8"); //rsqrt (not accurate enough)
-    add_groupnorm_function(optimized_groupnorm_v9,  "optimized_groupnorm_v9"); //8 accumulators for mean
+    add_groupnorm_function(optimized_groupnorm_v9,  "optimized_groupnorm_v9"); //8 accumulators for mean (base v7)
     add_groupnorm_function(optimized_groupnorm_v10, "optimized_groupnorm_v10"); //reduction for max
     add_groupnorm_function(optimized_groupnorm_v11, "optimized_groupnorm_v11"); //backsub manual 2 way unroll
     add_groupnorm_function(optimized_groupnorm_v12, "optimized_groupnorm_v12"); //backsub manual 4 way unroll
+    */
     add_groupnorm_function(optimized_groupnorm_v13, "optimized_groupnorm_v13"); //v12 with unoptimized 1D and 2D support (strong 3D slowdown)
-    //add_groupnorm_function(optimized_groupnorm_v14, "optimized_groupnorm_v14"); //optimzed 2D only
-    //add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only
-    add_groupnorm_function(optimized_groupnorm_v16, "optimized_groupnorm_v16"); //backsub manual 4 way unroll better layout (similar or slightly better than v12 for 32)
+    //add_groupnorm_function(optimized_groupnorm_v14, "optimized_groupnorm_v14"); //optimzed 2D only (base v12)
+    add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only (base v12)
+    /*
+    add_groupnorm_function(optimized_groupnorm_v16, "optimized_groupnorm_v16"); //backsub manual 4 way unroll better layout (base v12)
     add_groupnorm_function(optimized_groupnorm_v17, "optimized_groupnorm_v17"); //fuse reshape and backsub (worse for 32)
-    add_groupnorm_function(optimized_groupnorm_v18, "optimized_groupnorm_v18"); //no scaling weight temp array blowup (based on v12)
+    add_groupnorm_function(optimized_groupnorm_v18, "optimized_groupnorm_v18"); //no scaling weight temp array blowup (based v12)
     add_groupnorm_function(optimized_groupnorm_v19, "optimized_groupnorm_v19"); //vectorize scaling
     add_groupnorm_function(optimized_groupnorm_v20, "optimized_groupnorm_v20"); //vectorized scaling 4 accumlators
+    */
     add_groupnorm_function(optimized_groupnorm_all_dim, "optimized_groupnorm_all_dim"); //switch to best version of each dimention
 }
