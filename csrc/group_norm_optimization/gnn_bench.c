@@ -21,6 +21,44 @@ static groupnorm_func registered[MAX_FUNCS];
 static const char *names[MAX_FUNCS];
 static int count = 0;
 
+static void clifford_groupnorm_zero_globals(
+    int B,
+    int C,
+    int D,
+    int _I,
+    int num_groups,
+    bool running,
+    bool scaling
+    ){
+
+    //basic constants
+    int dim0 = (B*C)/num_groups;
+    //int group_size = C/num_groups;
+
+    if (running){
+        size_t running_mean_size = _I * dim0;
+        memset(gn_running_mean_temp, 0, running_mean_size * sizeof(float));
+        size_t running_cov_size = _I* _I * dim0;
+        memset(gn_running_cov_temp, 0, running_cov_size * sizeof(float));
+    }
+    if (scaling){
+        size_t weight_size = _I* _I * dim0;
+        memset(gn_weight_temp, 0, weight_size * sizeof(float));
+        size_t bias_size = _I * dim0;
+        memset(gn_bias_temp, 0, bias_size * sizeof(float));
+        memset(gn_weight_perm_temp, 0, weight_size * sizeof(float));
+    }
+    size_t x_size = dim0 * num_groups * D * _I;
+    memset(gn_X_temp, 0, x_size * sizeof(float));
+    size_t mean_size = dim0 * _I;
+    memset(gn_mean_temp, 0, mean_size * sizeof(float));
+    size_t cov_size = dim0*_I*_I;
+    memset(gn_cov_temp, 0, cov_size * sizeof(float));
+    size_t max_size = dim0;
+    memset(gn_max_temp, 0, max_size * sizeof(float));
+    return;
+}
+
 void add_groupnorm_function(groupnorm_func f, const char *name)
 {
     if (count >= MAX_FUNCS)
@@ -162,6 +200,7 @@ void run_all_groupnorm_benchmarks(int B)
     size_t len = (size_t)gn_B * gn_C * gn_D * gn_I;
     float *ref = malloc(len * sizeof(float));
 
+    clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
     registered[0](
         gn_x, gn_B, gn_C, gn_D, gn_I,
         gn_num_groups, gn_running,
@@ -176,6 +215,7 @@ void run_all_groupnorm_benchmarks(int B)
 
     for (int i = 0; i < cnt; ++i)
     {
+        clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
         registered[i](
             gn_x, gn_B, gn_C, gn_D, gn_I,
             gn_num_groups, gn_running,
