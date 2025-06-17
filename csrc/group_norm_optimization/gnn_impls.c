@@ -9154,9 +9154,11 @@ static void optimized_groupnorm_v22(
                     float row0 = b[0];
                     float row1 = b[1];
 
+                    FLOP(4);
                     row0 = fmaf(W[0], xv[0], row0);
                     row1 = fmaf(W[2], xv[0], row1);
 
+                    FLOP(4);
                     row0 = fmaf(W[1], xv[1], row0);
                     row1 = fmaf(W[3], xv[1], row1);
 
@@ -9251,7 +9253,7 @@ static void optimized_groupnorm_all_dim(
 
     switch (I){
         case 8:
-            optimized_groupnorm_v12(
+            optimized_groupnorm_v20(
                                         x,
                                         B,
                                         C,
@@ -9271,7 +9273,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 4:
-            optimized_groupnorm_v14(
+            optimized_groupnorm_v21(
                                         x,
                                         B,
                                         C,
@@ -9291,7 +9293,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 2:
-            optimized_groupnorm_v15(
+            optimized_groupnorm_v22(
                                         x,
                                         B,
                                         C,
@@ -9335,9 +9337,9 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v11, "optimized_groupnorm_v11"); //backsub manual 2 way unroll
     add_groupnorm_function(optimized_groupnorm_v12, "optimized_groupnorm_v12"); //backsub manual 4 way unroll
     */
-    add_groupnorm_function(optimized_groupnorm_v13, "optimized_groupnorm_v13"); //v12 with unoptimized 1D and 2D support (strong 3D slowdown)
+    //add_groupnorm_function(optimized_groupnorm_v13, "optimized_groupnorm_v13"); //v12 with unoptimized 1D and 2D support (strong 3D slowdown)
     //add_groupnorm_function(optimized_groupnorm_v14, "optimized_groupnorm_v14"); //optimzed 2D only (base v12)
-    add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only (base v12)
+    //add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only (base v12)
     /*
     add_groupnorm_function(optimized_groupnorm_v16, "optimized_groupnorm_v16"); //backsub manual 4 way unroll better layout (base v12)
     add_groupnorm_function(optimized_groupnorm_v17, "optimized_groupnorm_v17"); //fuse reshape and backsub (worse for 32)
@@ -9346,6 +9348,6 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v20, "optimized_groupnorm_v20"); //vectorized scaling 4 accumlators
     */
     //add_groupnorm_function(optimized_groupnorm_v21, "optimized_groupnorm_v21"); //2D version, scaling optimization (base v14) (scaling base v20)
-    add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //21 version, scaling optimization (base v15) (scaling base v21)
+    //add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //21 version, scaling optimization (base v15) (scaling base v21)
     add_groupnorm_function(optimized_groupnorm_all_dim, "optimized_groupnorm_all_dim"); //switch to best version of each dimention
 }

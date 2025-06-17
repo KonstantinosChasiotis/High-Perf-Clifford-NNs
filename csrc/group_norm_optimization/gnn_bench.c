@@ -200,7 +200,7 @@ void run_all_groupnorm_benchmarks(int B)
     size_t len = (size_t)gn_B * gn_C * gn_D * gn_I;
     float *ref = malloc(len * sizeof(float));
 
-    clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
+    //clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
     registered[0](
         gn_x, gn_B, gn_C, gn_D, gn_I,
         gn_num_groups, gn_running,
@@ -215,7 +215,7 @@ void run_all_groupnorm_benchmarks(int B)
 
     for (int i = 0; i < cnt; ++i)
     {
-        clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
+        //clifford_groupnorm_zero_globals(gn_B, gn_C, gn_D, gn_I, gn_num_groups, gn_running, gn_scaling);
         registered[i](
             gn_x, gn_B, gn_C, gn_D, gn_I,
             gn_num_groups, gn_running,
