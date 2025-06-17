@@ -670,7 +670,83 @@ void optimized_act_v7(
 }
 
 
+// ------------------------------------------------------------
+// optimized_act_v8
+// Loop restructuring to avoid large power 2 stride in inner loop
+// ------------------------------------------------------------
+void optimized_act_v8(
+    const float *x,
+    int           B,
+    int           C,
+    int           I_in,
+    int           I_full,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    // 1) Build inverse map
+    int *inv = malloc((size_t)I_full * sizeof *inv);
+    if (!inv) return;
+    for (int i = 0; i < I_full; ++i) inv[i] = -1;
+    for (int i = 0; i < I_in; ++i) inv[input_blades[i]] = i;
 
+    // 2) Build per-channel valid lists
+    int   *valid_idx    = malloc((size_t)C * K * sizeof *valid_idx);
+    float *valid_weight = malloc((size_t)C * K * sizeof *valid_weight);
+    int   *valid_count  = malloc((size_t)C * sizeof *valid_count);
+    if (!valid_idx || !valid_weight || !valid_count) {
+        free(inv); free(valid_idx); free(valid_weight); free(valid_count);
+        return;
+    }
+    for (int c = 0; c < C; ++c) {
+        int vc = 0;
+        const float *w_c = weight + (size_t)c * K;
+        for (int k = 0; k < K; ++k) {
+            int blade = kernel_blades[k];
+            int idx   = (blade >= 0 && blade < I_full) ? inv[blade] : -1;
+            if (idx >= 0) {
+                valid_idx[c*K + vc]    = idx;
+                valid_weight[c*K + vc] = w_c[k];
+                vc++;
+            }
+        }
+        valid_count[c] = vc;
+    }
+    free(inv);
+
+    // 3) Stride per batch slice
+    size_t stride = (size_t)C * I_in;
+
+    // 4) Fused loop: dot, lookup table sigmoid, write-back
+    for (int b = 0; b < B; ++b) {
+        for (int c = 0; c < C; ++c) {
+            int     vc   = valid_count[c];
+            int    *idxs = valid_idx    + (size_t)c * K;
+            float  *wts  = valid_weight + (size_t)c * K;
+            float   bval = bias[c];
+            const float *x_bc = x   + (size_t)b * stride + (size_t)c * I_in;
+            float       *o_bc = out + (size_t)b * stride + (size_t)c * I_in;
+            float acc = bval;
+            FLOP(2);
+            for (int j = 0; j < vc; ++j) {
+                acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                FLOP(2);
+            }
+            float g = fast_sigmoid(acc);
+            FLOP(4);
+            for (int i = 0; i < I_in; ++i) {
+                o_bc[i] = x_bc[i] * g;
+                FLOP(1);
+            }
+        }
+    }
+
+    // 5) Cleanup
+    free(valid_idx); free(valid_weight); free(valid_count);
+}
 
 
 void register_activation_functions(void) {
@@ -680,5 +756,5 @@ void register_activation_functions(void) {
     add_activation_function(optimized_act_v5,  "optimized_act_v5");
     add_activation_function(optimized_act_v6,  "optimized_act_v6");
     add_activation_function(optimized_act_v7,  "optimized_act_v7");
-
+    add_activation_function(optimized_act_v8,  "optimized_act_v8");
 }
