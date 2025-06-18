@@ -30,66 +30,7 @@ static void baseline_act(
     );
 }
 
-static void optimized_act_v0(
-    const float *x,
-    int           B,
-    int           C,
-    int           I_in,
-    int           I_full,
-    const int    *input_blades,
-    const float  *weight,
-    int           K,
-    const int    *kernel_blades,
-    const float  *bias,
-    float        *out
-) {
 
-    size_t Vsize = (size_t)B * C * I_full;
-    float *v = malloc(Vsize * sizeof(float));
-    memset(v, 0, Vsize * sizeof(float));
-
-    for (int b = 0; b < B; ++b) {
-      for (int c = 0; c < C; ++c) {
-        size_t xc = (size_t)b*C*I_in + c*I_in;
-        size_t vc = (size_t)b*C*I_full + c*I_full;
-        for (int i = 0; i < I_in; ++i) {
-          v[vc + input_blades[i]] = x[xc + i];
-        }
-      }
-    }
-
-    float *gate = malloc((size_t)B * C * sizeof(float));
-    for (int b = 0; b < B; ++b) {
-      for (int c = 0; c < C; ++c) {
-        float acc = bias[c];
-        const float *w = weight + (size_t)c * K;
-        FLOP(2);
-        size_t vc = (size_t)b*C*I_full + c*I_full;
-        for (int k = 0; k < K; ++k) {
-          int blade = kernel_blades[k];
-          acc += w[k] * v[vc + blade];
-          FLOP(2);
-        }
-        gate[b*C + c] = 1.0f / (1.0f + expf(-acc));
-        FLOP(4);
-      }
-    }
-
-    for (int b = 0; b < B; ++b) {
-      for (int c = 0; c < C; ++c) {
-        float g = gate[b*C + c];
-        size_t vc = (size_t)b*C*I_full + c*I_full;
-        size_t xo = (size_t)b*C*I_in  + c*I_in;
-        for (int i = 0; i < I_in; ++i) {
-          out[xo + i] = v[vc + input_blades[i]] * g;
-          FLOP(1);
-        }
-      }
-    }
-
-    free(gate);
-    free(v);
-}
 
 /*
  * optimized_act_v1
@@ -98,17 +39,6 @@ static void optimized_act_v0(
  * using a sparse kernel defined by kernel_blades[K] and an inverse mapping
  * of input_blades[I_in] into a dense space of size I_full. It eliminates
  * the need for a large temporary buffer by performing an on-the-fly lookup.
- *
- * Arguments:
- *   x             - pointer to input tensor of shape [B * C * I_in]
- *   B, C          - batch size and channel count
- *   I_in, I_full  - number of used blades and total blades respectively
- *   input_blades  - array of length I_in mapping input slots → blade indices
- *   weight        - weight tensor of shape [C * K]
- *   K             - number of kernel blades (sparse dot length)
- *   kernel_blades - array of length K listing blade indices for each weight
- *   bias          - bias array of length C
- *   out           - pointer to output tensor of shape [B * C * I_in]
  */
 void optimized_act_v1(
     const float *x,
@@ -292,19 +222,6 @@ void optimized_act_v2(
  * precomputation of valid indices and weights to enable branch-free
  * inner loops. This version targets single-core execution with
  * minimal control flow inside hot loops.
- *
- * Arguments:
- *   x             - input tensor [B][C][I_in]
- *   B             - batch size
- *   C             - number of channels
- *   I_in          - number of active blades per channel
- *   I_full        - total number of blade positions
- *   input_blades  - length-I_in array mapping input index → blade index
- *   weight        - weight matrix [C][K]
- *   K             - number of potentially non-zero weights per channel
- *   kernel_blades - length-K array listing blade indices for each weight
- *   bias          - length-C array of channel biases
- *   out           - output tensor [B][C][I_in]
  */
 #include <stdlib.h>
 #include <math.h>
@@ -417,20 +334,8 @@ void optimized_act_v5(
  * Incorporates fmaf-based fused activation using precomputed valid indices
  * and weights per channel, minimizing arithmetic in hot loops. Inspired by v3’s
  * k_idx/x_idx concept and v5’s valid_weight array.
- *
- * Arguments:
- *   x             - input tensor [B][C][I_in]
- *   B             - batch size
- *   C             - number of channels
- *   I_in          - number of active blades per channel
- *   I_full        - total number of blade positions
- *   input_blades  - length-I_in array mapping input index → blade index
- *   weight        - weight matrix [C][K]
- *   K             - number of potentially non-zero weights per channel
- *   kernel_blades - length-K array listing blade indices for each weight
- *   bias          - length-C array of channel biases
- *   out           - output tensor [B][C][I_in]
  */
+
 #include <stdlib.h>
 #include <math.h>
 
@@ -533,19 +438,6 @@ void optimized_act_v6(
  * for improved cache locality. LUT initialization samples [-6,6] instead of [-8,8],
  * and table size is halved to 512 entries, reducing memory footprint and
  * potentially improving speed while still maintaining ~1e-5 accuracy.
- *
- * Arguments:
- *   x             - input tensor [B][C][I_in]
- *   B             - batch size
- *   C             - number of channels
- *   I_in          - number of active blades per channel
- *   I_full        - total number of blade positions
- *   input_blades  - length-I_in array mapping input index → blade index
- *   weight        - weight matrix [C][K]
- *   K             - number of kernel weights per channel
- *   kernel_blades - length-K array listing blade indices for each weight
- *   bias          - length-C array of channel biases
- *   out           - output tensor [B][C][I_in]
  */
 #include <stdlib.h>
 #include <math.h>
@@ -670,15 +562,1025 @@ void optimized_act_v7(
 }
 
 
+/*
+ * optimized_act_v8
+ *
+ * Fused activation with reduced-range LUT (-6..6, 512 entries)
+ * and heap-allocated temporary buffers for dynamic sizes.
+ * Eliminates VLAs to ensure compatibility when C, I_full are not constants.
+ */
+#include <stdlib.h>
+#include <math.h>
+
+// ------------------------------------------------------------
+// Sigmoid LUT parameters and storage (half-size, tighter range)
+// ------------------------------------------------------------
+#define SIGMOID_LUT_SIZE 512      // Reduced table size for better cache
+static float sigmoid_lut[SIGMOID_LUT_SIZE];
+static int   lut_initialized = 0;
+
+// ------------------------------------------------------------
+// init_sigmoid_lut_v8
+// One-time initialization of the sigmoid LUT over [-6,6]
+// ------------------------------------------------------------
+static void init_sigmoid_lut_v8(void) {
+    const float x_min = -6.0f;
+    const float x_max =  6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x calculation
+        sigmoid_lut[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
+    }
+    lut_initialized = 1;
+}
+
+// ------------------------------------------------------------
+// fast_sigmoid_v8
+// Lookup + interpolation over reduced-range LUT
+// ------------------------------------------------------------
+static inline float fast_sigmoid_v8(float x) {
+    if (!lut_initialized) init_sigmoid_lut_v8();
+    const float x_min = -6.0f, x_max = 6.0f;
+    if (x <= x_min) return 0.0f;
+    if (x >= x_max) return 1.0f;
+    float fx   = (x - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for fx calculation
+    int   idx  = (int)fx;
+    float frac = fx - idx;
+    FLOP(1); // sub for frac
+    FLOP(3); // sub, mul, add for interpolation
+    return sigmoid_lut[idx] + frac * (sigmoid_lut[idx+1] - sigmoid_lut[idx]);
+}
+
+// ------------------------------------------------------------
+// optimized_act_v8
+// Main fused activation kernel with optimized LUT and heap buffers
+// ------------------------------------------------------------
+void optimized_act_v8(
+    const float *x,
+    int           B,
+    int           C,
+    int           I_in,
+    int           I_full,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    // L1 cache ~64KB. Choose tile sizes so per-tile working set (tc*I_in*tb + table) fits.
+    const int tb = 64;    // batch tile
+    const int tc = 4;     // channel tile
+
+    // Sigmoid table setup remains global/static; use fast_sigmoid_v8() as before.
+
+    size_t stride = (size_t)C * I_in;
+
+    // Pre-allocate inverse map once
+    int *inv = malloc((size_t)I_full * sizeof *inv);
+    if (!inv) return;
+
+    // Pre-build weight pruning thresholds
+    const float weight_eps = 1e-6f;
+    const float gate_eps   = 1e-6f;
+
+    // Process by tiles
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+
+            // Build valid lists for this channel tile
+            int   *valid_idx    = malloc((size_t)(c1-c0) * K * sizeof *valid_idx);
+            float *valid_weight = malloc((size_t)(c1-c0) * K * sizeof *valid_weight);
+            int   *valid_count  = malloc((size_t)(c1-c0) * sizeof *valid_count);
+            if (!valid_idx || !valid_weight || !valid_count) {
+                free(inv);
+                free(valid_idx); free(valid_weight); free(valid_count);
+                return;
+            }
+
+            for (int cc = c0; cc < c1; ++cc) {
+                // inverse map for this channel
+                for (int b = 0; b < I_full; ++b) inv[b] = -1;
+                for (int i = 0; i < I_in; ++i) {
+                    int blade = input_blades[i];
+                    if ((unsigned)blade < (unsigned)I_full) inv[blade] = i;
+                }
+                // prune and gather
+                int vc = 0;
+                const float *w_c = weight + (size_t)cc * K;
+                for (int k = 0; k < K; ++k) {
+                    int blade = kernel_blades[k];
+                    int idx   = ((unsigned)blade < (unsigned)I_full) ? inv[blade] : -1;
+                    float w   = w_c[k];
+                    if (idx >= 0 && fabsf(w) > weight_eps) {
+                        valid_idx[(cc-c0)*K + vc]    = idx;
+                        valid_weight[(cc-c0)*K + vc] = w;
+                        vc++;
+                    }
+                }
+                valid_count[cc-c0] = vc;
+            }
+
+            // Compute each tile
+            for (int cc = c0; cc < c1; ++cc) {
+                int vc = valid_count[cc-c0];
+                int *idxs = valid_idx + (size_t)(cc-c0) * K;
+                float *wts = valid_weight + (size_t)(cc-c0) * K;
+                float bval = bias[cc];
+
+                for (int bb = b0; bb < b1; ++bb) {
+                    const float *x_bc = x + (size_t)bb * stride + (size_t)cc * I_in;
+                    float *o_bc        = out + (size_t)bb * stride + (size_t)cc * I_in;
+
+                    // sparse dot-product
+                    float acc = bval;
+                    FLOP(2);
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2);
+                    }
+                    // fast sigmoid
+                    float g = fast_sigmoid_v8(acc);
+                    FLOP(4);
+                    // gate sparsity
+                    if (g < gate_eps) {
+                        for (int i = 0; i < I_in; ++i) o_bc[i] = 0.0f;
+                        // no flops for zero assignment
+                    } else if (g > 1.0f - gate_eps) {
+                        for (int i = 0; i < I_in; ++i) o_bc[i] = x_bc[i];
+                        // no flops for copy assignment
+                    } else {
+                        for (int i = 0; i < I_in; ++i) {
+                            o_bc[i] = x_bc[i] * g;
+                            FLOP(1);
+                        }
+                    }
+                }
+            }
+
+            free(valid_idx);
+            free(valid_weight);
+            free(valid_count);
+        }
+    }
+
+    free(inv);
+}
+
+
+/*
+ * optimized_act_v9
+ *
+ * Fused activation with reduced-range SIGMOID lookup table (-6..6, 512 entries),
+ * tiled for cache locality, and hoisted/reused buffers to eliminate per-tile allocation.
+ * Eliminates VLAs to ensure compatibility when C, I_full are not constants.
+ *
+ * Arguments:
+ *   x             - input tensor [B][C][I_in]
+ *   B             - batch size
+ *   C             - number of channels
+ *   I_in          - number of active blades per channel
+ *   I_full        - total number of blade positions
+ *   input_blades  - length-I_in array mapping input index → blade index
+ *   weight        - weight matrix [C][K]
+ *   K             - number of kernel weights per channel
+ *   kernel_blades - length-K array listing blade indices for each weight
+ *   bias          - length-C array of channel biases
+ *   out           - output tensor [B][C][I_in]
+ */
+#include <stdlib.h>
+#include <math.h>
+
+// ------------------------------------------------------------
+// SIGMOID lookup parameters and storage (half-size, tighter range)
+// ------------------------------------------------------------
+#define SIGMOID_LUT_SIZE 512      // Reduced table size for better cache
+static float sigmoid_lut_v9[SIGMOID_LUT_SIZE];
+static int   lut_v9_initialized = 0;
+
+// ------------------------------------------------------------
+// init_sigmoid_lut_v9
+// One-time initialization of the sigmoid LUT over [-6,6]
+// ------------------------------------------------------------
+static void init_sigmoid_lut_v9(void) {
+    const float x_min = -6.0f;
+    const float x_max =  6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        // compute sample x
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x calculation
+        // compute sigmoid
+        sigmoid_lut_v9[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
+    }
+    lut_v9_initialized = 1;
+}
+
+// ------------------------------------------------------------
+// fast_sigmoid_v9
+// Lookup + interpolation over reduced-range LUT
+// ------------------------------------------------------------
+static inline float fast_sigmoid_v9(float x) {
+    if (!lut_v9_initialized) init_sigmoid_lut_v9();
+    const float x_min = -6.0f, x_max =  6.0f;
+    if (x <= x_min) return 0.0f;
+    if (x >= x_max) return 1.0f;
+    // map to LUT index space
+    float fx   = (x - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for fx calculation
+    int   idx  = (int)fx;
+    float frac = fx - idx;
+    FLOP(1); // sub for frac calculation
+    // linear interpolation
+    FLOP(3); // sub, mul, add for interpolation
+    return sigmoid_lut_v9[idx] + frac * (sigmoid_lut_v9[idx+1] - sigmoid_lut_v9[idx]);
+}
+
+// ------------------------------------------------------------
+// optimized_act_v9
+// Main fused activation kernel with optimized LUT and hoisted buffers
+// ------------------------------------------------------------
+void optimized_act_v9(
+    const float *x,
+    int           B,
+    int           C,
+    int           I_in,
+    int           I_full,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    // Ensure SIGMOID table is ready
+    if (!lut_v9_initialized) init_sigmoid_lut_v9();
+
+    // L1 cache ~64KB: choose tile sizes for batch (tb) and channel (tc)
+    const int tb = 64;
+    const int tc = 4;
+    size_t stride = (size_t)C * I_in;
+
+    // Hoisted & reused buffers
+    int   *inv          = malloc((size_t)I_full * sizeof *inv);
+    int   *valid_idx    = malloc((size_t)C * K * sizeof *valid_idx);
+    float *valid_weight = malloc((size_t)C * K * sizeof *valid_weight);
+    int   *valid_count  = malloc((size_t)C * sizeof *valid_count);
+    if (!inv || !valid_idx || !valid_weight || !valid_count) {
+        free(inv); free(valid_idx); free(valid_weight); free(valid_count);
+        return;
+    }
+
+    const float weight_eps = 1e-6f;
+    const float gate_eps   = 1e-6f;
+
+    // Tiled main loops
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+
+            // Build per-channel sparse lists
+            for (int cc = c0; cc < c1; ++cc) {
+                // inverse-map build
+                for (int i = 0; i < I_full; ++i) inv[i] = -1;
+                for (int i = 0; i < I_in; ++i) {
+                    int blade = input_blades[i];
+                    if ((unsigned)blade < (unsigned)I_full) inv[blade] = i;
+                }
+                // prune & gather
+                int vc = 0;
+                const float *w_c = weight + (size_t)cc * K;
+                for (int k = 0; k < K; ++k) {
+                    int blade = kernel_blades[k];
+                    int idx   = ((unsigned)blade < (unsigned)I_full) ? inv[blade] : -1;
+                    float w   = w_c[k];
+                    if (idx >= 0 && fabsf(w) > weight_eps) {
+                        valid_idx[cc*K + vc]    = idx;
+                        valid_weight[cc*K + vc] = w;
+                        vc++;
+                    }
+                }
+                valid_count[cc] = vc;
+            }
+
+            // Compute over each tile
+            for (int cc = c0; cc < c1; ++cc) {
+                int     vc   = valid_count[cc];
+                int    *idxs = valid_idx    + (size_t)cc * K;
+                float  *wts  = valid_weight + (size_t)cc * K;
+                float   bval = bias[cc];
+
+                for (int bb = b0; bb < b1; ++bb) {
+                    const float *x_bc = x   + (size_t)bb * stride + (size_t)cc * I_in;
+                    float       *o_bc = out + (size_t)bb * stride + (size_t)cc * I_in;
+
+                    // sparse dot-product
+                    float acc = bval;
+                    FLOP(2); // load bias and zero-init accumulator
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2); // fused multiply-add: mul+add
+                    }
+
+                    // fast sigmoid
+                    float g = fast_sigmoid_v9(acc);
+                    FLOP(4); // count the sigmoid
+
+                    // gate-output sparsity
+                    if (g < gate_eps) {
+                        for (int i = 0; i < I_in; ++i) o_bc[i] = 0.0f;
+                        // zero stores: no FLOP
+                    } else if (g > 1.0f - gate_eps) {
+                        for (int i = 0; i < I_in; ++i) o_bc[i] = x_bc[i];
+                        // copy: no FLOP
+                    } else {
+                        for (int i = 0; i < I_in; ++i) {
+                            o_bc[i] = x_bc[i] * g;
+                            FLOP(1); // final multiply
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    free(inv);
+    free(valid_idx);
+    free(valid_weight);
+    free(valid_count);
+}
+
+/*
+ * optimized_act_v10
+ *
+ * Fused activation with reduced-range SIGMOID lookup table (-6..6, 512 entries),
+ * hoisted sparse-list building per channel, tiled for cache locality,
+ * and hoisted/reused buffers to eliminate per-tile allocation.
+ * Eliminates VLAs to ensure compatibility when C and space are not compile-time constants.
+ *
+ * Arguments:
+ *   x             - input tensor [B][C][slots]
+ *   B             - batch size
+ *   C             - number of channels
+ *   slots         - number of stored blade entries per channel
+ *   space         - size of the full blade index range
+ *   input_blades  - length-slots array mapping slot index → blade index
+ *   weight        - weight matrix [C][K]
+ *   K             - number of nonzero weights per channel
+ *   kernel_blades - length-K array listing blade indices
+ *   bias          - length-C array of channel biases
+ *   out           - output tensor [B][C][slots]
+ */
+#include <stdlib.h>
+#include <math.h>
+
+// ------------------------------------------------------------
+// SIGMOID lookup parameters and storage (half-size, tighter range)
+// ------------------------------------------------------------
+#define SIGMOID_LUT_SIZE 512      // Reduced table size for better cache
+static float sigmoid_lut_v10[SIGMOID_LUT_SIZE];
+static int   lut_v10_initialized = 0;
+
+// ------------------------------------------------------------
+// init_sigmoid_lut_v10
+// One-time initialization of the sigmoid LUT over [-6,6]
+// ------------------------------------------------------------
+static void init_sigmoid_lut_v10(void) {
+    const float x_min = -6.0f, x_max = 6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        // compute sample x
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x calculation
+        // compute sigmoid
+        sigmoid_lut_v10[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
+    }
+    lut_v10_initialized = 1;
+}
+
+// ------------------------------------------------------------
+// fast_sigmoid_v10
+// Lookup + linear interpolation over reduced-range LUT
+// ------------------------------------------------------------
+static inline float fast_sigmoid_v10(float z) {
+    if (!lut_v10_initialized) init_sigmoid_lut_v10();
+    const float x_min = -6.0f, x_max = 6.0f;
+    if (z <= x_min) return 0.0f;
+    if (z >= x_max) return 1.0f;
+    // map to LUT index space
+    float f = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for f calculation
+    int   idx  = (int)f;
+    float frac = f - idx;
+    FLOP(1); // sub for frac calculation
+    // linear interpolation
+    FLOP(3); // sub, mul, add for interpolation
+    return sigmoid_lut_v10[idx] + frac * (sigmoid_lut_v10[idx+1] - sigmoid_lut_v10[idx]);
+}
+
+// ------------------------------------------------------------
+// optimized_act_v10
+// Main fused activation kernel with optimized LUT and hoisted buffers
+// ------------------------------------------------------------
+void optimized_act_v10(
+    const float *x,
+    int           B,
+    int           C,
+    int           slots,
+    int           space,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    // Initialize SIGMOID table once
+    if (!lut_v10_initialized) init_sigmoid_lut_v10();
+
+    // L1 cache ~64KB: choose tile sizes
+    const int tb = 64;
+    const int tc = 4;
+    size_t stride = (size_t)C * slots;
+
+    // Hoisted & reused buffers
+    int   *inv        = malloc((size_t)space * sizeof *inv);
+    int   *valid_idx  = malloc((size_t)C * K   * sizeof *valid_idx);
+    float *valid_wght = malloc((size_t)C * K   * sizeof *valid_wght);
+    int   *valid_cnt  = malloc((size_t)C         * sizeof *valid_cnt);
+    if (!inv || !valid_idx || !valid_wght || !valid_cnt) {
+        free(inv); free(valid_idx); free(valid_wght); free(valid_cnt);
+        return;
+    }
+
+    // Build sparse lists once per channel
+    const float w_eps = 1e-6f;
+    for (int c = 0; c < C; ++c) {
+        // inverse-map build
+        for (int i = 0; i < space; ++i) inv[i] = -1;
+        for (int i = 0; i < slots; ++i) {
+            int blade = input_blades[i];
+            if ((unsigned)blade < (unsigned)space) inv[blade] = i;
+        }
+        // prune & gather
+        int vc = 0;
+        const float *w_c = weight + (size_t)c * K;
+        for (int k = 0; k < K; ++k) {
+            int blade = kernel_blades[k];
+            int idx   = ((unsigned)blade < (unsigned)space) ? inv[blade] : -1;
+            float w   = w_c[k];
+            if (idx >= 0 && fabsf(w) > w_eps) {
+                valid_idx[c*K + vc]  = idx;
+                valid_wght[c*K + vc] = w;
+                vc++;
+            }
+        }
+        valid_cnt[c] = vc;
+    }
+
+    const float g_eps = 1e-6f;
+
+    // Tiled main compute
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+            for (int c = c0; c < c1; ++c) {
+                int    vc   = valid_cnt[c];
+                int   *idxs = valid_idx  + (size_t)c * K;
+                float *wts  = valid_wght + (size_t)c * K;
+                float  bval = bias[c];
+                for (int b = b0; b < b1; ++b) {
+                    const float *x_bc = x + (size_t)b * stride + (size_t)c * slots;
+                    float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
+
+                    // sparse dot-product
+                    float acc = bval;
+                    FLOP(2); // load bias and zero-init accumulator
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2); // fused multiply-add: mul+add
+                    }
+
+                    // fast sigmoid
+                    float g = fast_sigmoid_v10(acc);
+                    FLOP(4); // sigmoid count
+
+                    // gate-output sparsity
+                    if (g < g_eps) {
+                        for (int i = 0; i < slots; ++i) o_bc[i] = 0.0f;
+                    } else if (g > 1.0f - g_eps) {
+                        for (int i = 0; i < slots; ++i) o_bc[i] = x_bc[i];
+                    } else {
+                        for (int i = 0; i < slots; ++i) {
+                            o_bc[i] = x_bc[i] * g;
+                            FLOP(1); // final multiply
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    free(inv);
+    free(valid_idx);
+    free(valid_wght);
+    free(valid_cnt);
+}
+
+
+/*
+ * optimized_act_v11
+ *
+ * Fused activation with reduced-range SIGMOID lookup table (-6..6, 512 entries),
+ * hoisted sparse-list building per channel, tiled for cache locality,
+ * hoisted/reused buffers, and branchless gate application.
+ *
+ * Arguments:
+ *   x             - input tensor [B][C][slots]
+ *   B             - batch size
+ *   C             - number of channels
+ *   slots         - number of stored blade entries per channel
+ *   space         - size of the full blade index range
+ *   input_blades  - length-slots array mapping slot index → blade index
+ *   weight        - weight matrix [C][K]
+ *   K             - number of nonzero weights per channel
+ *   kernel_blades - length-K array listing blade indices
+ *   bias          - length-C array of channel biases
+ *   out           - output tensor [B][C][slots]
+ */
+#include <stdlib.h>
+#include <math.h>
+
+#define SIGMOID_LUT_SIZE 512
+static float sigmoid_lut_v11[SIGMOID_LUT_SIZE];
+static int   lut_v11_initialized = 0;
+
+static void init_sigmoid_lut_v11(void) {
+    const float x_min = -6.0f, x_max = 6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x sampling
+        sigmoid_lut_v11[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
+    }
+    lut_v11_initialized = 1;
+}
+
+static inline float fast_sigmoid_v11(float z) {
+    if (!lut_v11_initialized) init_sigmoid_lut_v11();
+    const float x_min = -6.0f, x_max = 6.0f;
+    if (z <= x_min) return 0.0f;
+    if (z >= x_max) return 1.0f;
+    float f    = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for index mapping
+    int   idx  = (int)f;
+    float frac = f - idx;
+    FLOP(1); // sub for fractional part
+    FLOP(3); // sub, mul, add for interpolation
+    return sigmoid_lut_v11[idx] + frac * (sigmoid_lut_v11[idx+1] - sigmoid_lut_v11[idx]);
+}
+
+void optimized_act_v11(
+    const float *x,
+    int           B,
+    int           C,
+    int           slots,
+    int           space,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    if (!lut_v11_initialized) init_sigmoid_lut_v11();
+
+    const int tb = 64;
+    const int tc = 4;
+    size_t stride = (size_t)C * slots;
+
+    int   *inv        = malloc((size_t)space * sizeof *inv);
+    int   *valid_idx  = malloc((size_t)C * K   * sizeof *valid_idx);
+    float *valid_wght = malloc((size_t)C * K   * sizeof *valid_wght);
+    int   *valid_cnt  = malloc((size_t)C         * sizeof *valid_cnt);
+    if (!inv || !valid_idx || !valid_wght || !valid_cnt) {
+        free(inv); free(valid_idx); free(valid_wght); free(valid_cnt);
+        return;
+    }
+
+    const float w_eps = 1e-6f;
+    for (int c = 0; c < C; ++c) {
+        for (int i = 0; i < space; ++i) inv[i] = -1;
+        for (int i = 0; i < slots; ++i) {
+            int blade = input_blades[i];
+            if ((unsigned)blade < (unsigned)space) inv[blade] = i;
+        }
+        int vc = 0;
+        const float *w_c = weight + (size_t)c * K;
+        for (int k = 0; k < K; ++k) {
+            int blade = kernel_blades[k];
+            int idx   = ((unsigned)blade < (unsigned)space) ? inv[blade] : -1;
+            float w   = w_c[k];
+            if (idx >= 0 && fabsf(w) > w_eps) {
+                valid_idx[c*K + vc]  = idx;
+                valid_wght[c*K + vc] = w;
+                vc++;
+            }
+        }
+        valid_cnt[c] = vc;
+    }
+
+    const float g_eps = 1e-6f;
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+            for (int c = c0; c < c1; ++c) {
+                int    vc   = valid_cnt[c];
+                int   *idxs = valid_idx  + (size_t)c * K;
+                float *wts  = valid_wght + (size_t)c * K;
+                float  bval = bias[c];
+                for (int b = b0; b < b1; ++b) {
+                    const float *x_bc = x + (size_t)b * stride + (size_t)c * slots;
+                    float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
+
+                    float acc = bval;
+                    FLOP(2); // load bias + zero-init
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2); // mul + add
+                    }
+
+                    float g = fast_sigmoid_v11(acc);
+                    FLOP(4); // sigmoid cost
+
+                    // branchless gate
+                    float m_low  = (g > g_eps);
+                    float m_high = (g > 1.0f - g_eps);
+                    float scale  = m_low * (m_high + (1.0f - m_high) * g);
+                    FLOP(3); // comp + mul + add for scale
+
+                    for (int i = 0; i < slots; ++i) {
+                        o_bc[i] = x_bc[i] * scale;
+                        FLOP(1); // final multiply
+                    }
+                }
+            }
+        }
+    }
+
+    free(inv);
+    free(valid_idx);
+    free(valid_wght);
+    free(valid_cnt);
+}
+
+
+/*
+ * optimized_act_v12
+ *
+ * Fused activation with reduced-range SIGMOID lookup table (-6..6, 512 entries),
+ * tiled for cache locality, hoisted/reused buffers,
+ * per-tile sparse-list building, and branchless gate application.
+ *
+ * Arguments:
+ *   x             - input tensor [B][C][slots]
+ *   B             - batch size
+ *   C             - number of channels
+ *   slots         - number of stored blade entries per channel
+ *   space         - size of the full blade index range
+ *   input_blades  - length-slots array mapping slot index → blade index
+ *   weight        - weight matrix [C][K]
+ *   K             - number of nonzero weights per channel
+ *   kernel_blades - length-K array listing blade indices
+ *   bias          - length-C array of channel biases
+ *   out           - output tensor [B][C][slots]
+ */
+#include <stdlib.h>
+#include <math.h>
+
+#define SIGMOID_LUT_SIZE 512
+static float sigmoid_lut_v12[SIGMOID_LUT_SIZE];
+static int   lut_v12_initialized = 0;
+
+static void init_sigmoid_lut_v12(void) {
+    const float x_min = -6.0f, x_max = 6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x sampling
+        sigmoid_lut_v12[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for sigmoid computation
+    }
+    lut_v12_initialized = 1;
+}
+
+static inline float fast_sigmoid_v12(float z) {
+    if (!lut_v12_initialized) init_sigmoid_lut_v12();
+    const float x_min = -6.0f, x_max = 6.0f;
+    if (z <= x_min) return 0.0f;
+    if (z >= x_max) return 1.0f;
+    float f    = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for index mapping
+    int   idx  = (int)f;
+    float frac = f - idx;
+    FLOP(1); // sub for fractional part
+    FLOP(3); // sub, mul, add for interpolation
+    return sigmoid_lut_v12[idx] + frac * (sigmoid_lut_v12[idx+1] - sigmoid_lut_v12[idx]);
+}
+
+void optimized_act_v12(
+    const float *x,
+    int           B,
+    int           C,
+    int           slots,
+    int           space,
+    const int    *input_blades,
+    const float  *weight,
+    int           K,
+    const int    *kernel_blades,
+    const float  *bias,
+    float        *out
+) {
+    if (!lut_v12_initialized) init_sigmoid_lut_v12();
+
+    const int tb = 64;
+    const int tc = 4;
+    size_t stride = (size_t)C * slots;
+
+    int   *inv        = malloc((size_t)space * sizeof *inv);
+    int   *valid_idx  = malloc((size_t)C * K   * sizeof *valid_idx);
+    float *valid_wght = malloc((size_t)C * K   * sizeof *valid_wght);
+    int   *valid_cnt  = malloc((size_t)C         * sizeof *valid_cnt);
+    if (!inv || !valid_idx || !valid_wght || !valid_cnt) {
+        free(inv); free(valid_idx); free(valid_wght); free(valid_cnt);
+        return;
+    }
+
+    const float w_eps = 1e-6f;
+    const float g_eps = 1e-6f;
+
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+            for (int c = c0; c < c1; ++c) {
+                // build sparse lists per tile
+                for (int i = 0; i < space; ++i) inv[i] = -1;
+                for (int i = 0; i < slots; ++i) {
+                    int blade = input_blades[i];
+                    if ((unsigned)blade < (unsigned)space) inv[blade] = i;
+                }
+                int vc = 0;
+                const float *w_c = weight + (size_t)c * K;
+                for (int k = 0; k < K; ++k) {
+                    int blade = kernel_blades[k];
+                    int idx = ((unsigned)blade < (unsigned)space) ? inv[blade] : -1;
+                    float w = w_c[k];
+                    if (idx >= 0 && fabsf(w) > w_eps) {
+                        valid_idx[c*K + vc]  = idx;
+                        valid_wght[c*K + vc] = w;
+                        vc++;
+                    }
+                }
+                valid_cnt[c] = vc;
+            }
+
+            for (int c = c0; c < c1; ++c) {
+                int    vc   = valid_cnt[c];
+                int   *idxs = valid_idx  + (size_t)c * K;
+                float *wts  = valid_wght + (size_t)c * K;
+                float  bval = bias[c];
+                for (int b = b0; b < b1; ++b) {
+                    const float *x_bc = x + (size_t)b * stride + (size_t)c * slots;
+                    float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
+
+                    float acc = bval;
+                    FLOP(2); // load bias + zero-init
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2); // mul + add
+                    }
+
+                    float g      = fast_sigmoid_v12(acc);
+                    FLOP(4); // sigmoid cost
+                    // branchless gate mask
+                    float m_low  = (g > g_eps);
+                    float m_high = (g > 1.0f - g_eps);
+                    float scale  = m_low * (m_high + (1.0f - m_high) * g);
+                    FLOP(3); // comp + mul + add for scale
+
+                    for (int i = 0; i < slots; ++i) {
+                        o_bc[i] = x_bc[i] * scale;
+                        FLOP(1); // final multiply
+                    }
+                }
+            }
+        }
+    }
+
+    free(inv);
+    free(valid_idx);
+    free(valid_wght);
+    free(valid_cnt);
+}
+
+
+
+/*
+ * optimized_act_v13
+ *
+ * Based on v11: Fused activation with reduced-range SIGMOID LUT (512 entries),
+ * hoisted per-channel sparse lists, tiled for cache locality,
+ * hoisted/reused buffers, branchless gate application,
+ * and AVX2-accelerated scale/write-back.
+ *
+ * Arguments:
+ *   x             - input tensor [B][C][slots]
+ *   B             - batch size
+ *   C             - number of channels
+ *   slots         - number of stored blade entries per channel
+ *   space         - size of the full blade index range
+ *   input_blades  - length-slots array mapping slot index → blade index
+ *   weight        - weight matrix [C][K]
+ *   K             - number of nonzero weights per channel
+ *   kernel_blades - length-K array listing blade indices
+ *   bias          - length-C array of channel biases
+ *   out           - output tensor [B][C][slots]
+ */
+#include <stdlib.h>
+#include <math.h>
+#include <immintrin.h>  // AVX2 intrinsics
+
+#define SIGMOID_LUT_SIZE 512
+static float sigmoid_lut_v13[SIGMOID_LUT_SIZE] __attribute__((aligned(64)));
+static int   lut_v13_initialized = 0;
+
+// One-time initialization of SIGMOID LUT over [-6,6]
+static void init_sigmoid_lut_v13(void) {
+    const float x_min = -6.0f, x_max = 6.0f;
+    for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
+        float x = x_min + (x_max - x_min) * (float)i / (SIGMOID_LUT_SIZE - 1);
+        FLOP(4); // sub, mul, div, add for x sampling
+        sigmoid_lut_v13[i] = 1.0f / (1.0f + expf(-x));
+        FLOP(4); // expf, negate, add, div for LUT sigmoid
+    }
+    lut_v13_initialized = 1;
+}
+
+// fast_sigmoid_v13: LUT lookup + linear interpolation
+static inline float fast_sigmoid_v13(float z) {
+    if (!lut_v13_initialized) init_sigmoid_lut_v13();
+    const float x_min = -6.0f, x_max = 6.0f;
+    if (z <= x_min) return 0.0f;
+    if (z >= x_max) return 1.0f;
+    float f    = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
+    FLOP(3); // sub, mul, div for index mapping
+    int   idx  = (int)f;
+    if (idx >= SIGMOID_LUT_SIZE - 1) idx = SIGMOID_LUT_SIZE - 2;
+    float frac = f - idx;
+    FLOP(1); // sub for fractional part
+    float y0   = sigmoid_lut_v13[idx];
+    float y1   = sigmoid_lut_v13[idx+1];
+    float delta = y1 - y0;
+    FLOP(1); // sub y1 - y0
+    float res   = y0 + frac * delta;
+    FLOP(1); // mul + add for interpolation
+    return res;
+}
+
+void optimized_act_v13(
+    const float * __restrict__ x,
+    int           B,
+    int           C,
+    int           slots,
+    int           space,
+    const int    * __restrict__ input_blades,
+    const float  * __restrict__ weight,
+    int           K,
+    const int    * __restrict__ kernel_blades,
+    const float  * __restrict__ bias,
+    float        * __restrict__ out
+) {
+    // Ensure LUT is built
+    if (!lut_v13_initialized) init_sigmoid_lut_v13();
+
+    // Tile sizes for L1 cache (~64KB)
+    const int tb = 64, tc = 4;
+    size_t stride = (size_t)C * slots;
+
+    // Hoisted buffers
+    int   *inv        = malloc((size_t)space * sizeof *inv);
+    int   *valid_idx  = malloc((size_t)C * K   * sizeof *valid_idx);
+    float *valid_wght = malloc((size_t)C * K   * sizeof *valid_wght);
+    int   *valid_cnt  = malloc((size_t)C         * sizeof *valid_cnt);
+    if (!inv || !valid_idx || !valid_wght || !valid_cnt) {
+        free(inv); free(valid_idx); free(valid_wght); free(valid_cnt);
+        return;
+    }
+
+    const float w_eps = 1e-6f;
+    const float g_eps = 1e-6f;
+
+    // Build sparse lists once per channel
+    for (int c = 0; c < C; ++c) {
+        // inverse map: blade index → slot index
+        for (int i = 0; i < space; ++i) inv[i] = -1;
+        for (int i = 0; i < slots; ++i) {
+            int bidx = input_blades[i];
+            if ((unsigned)bidx < (unsigned)space) inv[bidx] = i;
+        }
+        // gather nonzero weights
+        int vc = 0;
+        const float *w_c = weight + (size_t)c * K;
+        for (int k = 0; k < K; ++k) {
+            int bidx = kernel_blades[k];
+            int idx  = ((unsigned)bidx < (unsigned)space) ? inv[bidx] : -1;
+            float w   = w_c[k];
+            if (idx >= 0 && fabsf(w) > w_eps) {
+                valid_idx[c*K + vc]  = idx;
+                valid_wght[c*K + vc] = w;
+                vc++;
+            }
+        }
+        valid_cnt[c] = vc;
+    }
+
+    // Tiled compute with branchless gate & AVX2 scale/write
+    for (int b0 = 0; b0 < B; b0 += tb) {
+        int b1 = b0 + tb < B ? b0 + tb : B;
+        for (int c0 = 0; c0 < C; c0 += tc) {
+            int c1 = c0 + tc < C ? c0 + tc : C;
+            for (int c = c0; c < c1; ++c) {
+                int    vc   = valid_cnt[c];
+                int   *idxs = valid_idx  + (size_t)c * K;
+                float *wts  = valid_wght + (size_t)c * K;
+                float  bval = bias[c];
+                for (int b = b0; b < b1; ++b) {
+                    const float *x_bc = x + (size_t)b * stride + (size_t)c * slots;
+                    float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
+
+                    // sparse dot-product
+                    float acc = bval;
+                    FLOP(2); // load bias + zero-init
+                    for (int j = 0; j < vc; ++j) {
+                        acc = fmaf(wts[j], x_bc[idxs[j]], acc);
+                        FLOP(2); // fused mul+add
+                    }
+                    // branchless gate
+                    float g     = fast_sigmoid_v13(acc);
+                    FLOP(0); // counted inside fast_sigmoid_v13
+                    float m_lo  = (g > g_eps);
+                    float m_hi  = (g > 1.0f - g_eps);
+                    float scale = m_lo * (m_hi + (1.0f - m_hi) * g);
+                    FLOP(3); // comp + mul + add for scale
+
+                    // AVX2 scale & write-back
+                    __m256 vs = _mm256_set1_ps(scale);
+                    int i = 0;
+                    for (; i + 7 < slots; i += 8) {
+                        __m256 vx = _mm256_loadu_ps(x_bc + i);
+                        __m256 vo = _mm256_mul_ps(vx, vs);
+                        _mm256_storeu_ps(o_bc + i, vo);
+                        FLOP(8); // 8 vector multiplies
+                    }
+                    for (; i < slots; ++i) {
+                        o_bc[i] = x_bc[i] * scale;
+                        FLOP(1); // multiply
+                    }
+                }
+            }
+        }
+    }
+
+    // cleanup
+    free(inv);
+    free(valid_idx);
+    free(valid_wght);
+    free(valid_cnt);
+}
 
 
 
 void register_activation_functions(void) {
     add_activation_function(baseline_act,      "baseline_act");
-    add_activation_function(optimized_act_v1,  "optimized_act_v1");
-    add_activation_function(optimized_act_v2,  "optimized_act_v2");
-    add_activation_function(optimized_act_v5,  "optimized_act_v5");
-    add_activation_function(optimized_act_v6,  "optimized_act_v6");
-    add_activation_function(optimized_act_v7,  "optimized_act_v7");
+    //add_activation_function(optimized_act_v1,  "optimized_act_v1");
+    //add_activation_function(optimized_act_v2,  "optimized_act_v2");
+    //add_activation_function(optimized_act_v5,  "optimized_act_v5");
+    //add_activation_function(optimized_act_v6,  "optimized_act_v6");
+    //add_activation_function(optimized_act_v7,  "optimized_act_v7");
+    //add_activation_function(optimized_act_v8,  "optimized_act_v8");
+    //add_activation_function(optimized_act_v9,  "optimized_act_v9");
+    //add_activation_function(optimized_act_v10,  "optimized_act_v10");
+    add_activation_function(optimized_act_v11,  "optimized_act_v11");
+    add_activation_function(optimized_act_v12,  "optimized_act_v12");
+    add_activation_function(optimized_act_v13,  "optimized_act_v13");
 
 }

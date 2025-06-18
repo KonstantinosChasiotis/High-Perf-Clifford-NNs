@@ -20,7 +20,9 @@ C=16       # example in/out channels
 I_IN=8     # number of input blades
 I_FULL=16  # full algebra blades
 K=4        # kernel size
-BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384)
+# BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384)
+BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536)
+#BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 524288)
 CSV=perfplot_activation.csv
 
 if [ "$MODE" = "0" ]; then
