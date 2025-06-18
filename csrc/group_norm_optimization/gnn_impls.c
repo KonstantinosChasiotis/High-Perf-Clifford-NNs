@@ -13,6 +13,14 @@
 #include <stdio.h>     // For fprintf in case of errors (though not strictly used in final proposal)
 #include <math.h>      // For fmaf
 
+
+
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// README section is at the end of the file (above the registered functions)
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
 //baseline with memory alloc
 /*
 static void baseline_groupnorm(
@@ -7929,7 +7937,7 @@ static void optimized_groupnorm_v20(
     assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
     assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
 
-    //mean
+    //CENTERING
     __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         //calc mean
@@ -7995,7 +8003,7 @@ static void optimized_groupnorm_v20(
         }
     }
 
-    //calc cov
+    //CALCULATE COV
     __m256 cov_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < I; j++){ //row selector
@@ -8063,6 +8071,7 @@ static void optimized_groupnorm_v20(
         }
     }
 
+    //MAXIMUM
     for(int i = 0; i < dim0; i++){
         __m256 maxv0 = _mm256_loadu_ps(&gn_cov_temp[i*I*I]);
         __m256 maxv1 = _mm256_loadu_ps(&gn_cov_temp[i*I*I + 8]);
@@ -8093,7 +8102,7 @@ static void optimized_groupnorm_v20(
         }
     }
 
-    //cholesky decomp
+    //CHOLESKY
 
     //reshape
     for(int i = 0; i < dim0; i+=8){ //jump 8 cov mats
@@ -8176,6 +8185,7 @@ static void optimized_groupnorm_v20(
         }
     }
 
+    //BACK SUBSTITUTION
     //invert the diagaonal first then
     for(int i = 0; i < dim0; i++){
         for(int d = 0; d < I; d++){
@@ -8265,7 +8275,7 @@ static void optimized_groupnorm_v20(
         }
     }
     
-    //blow up weight and bias
+    //SCALING
     if ( scaling ){
 
         //just a transpose
@@ -8372,7 +8382,7 @@ static void optimized_groupnorm_v21(
     assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
     assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
    
-    //mean
+    //CENTERING
     __m128 mean_scale = _mm_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         //calc mean
@@ -8438,7 +8448,7 @@ static void optimized_groupnorm_v21(
         }
     }
 
-    //calc cov
+    //CALCULATE COV
     __m128 cov_scale = _mm_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < I; j++){ //row selector
@@ -8506,6 +8516,7 @@ static void optimized_groupnorm_v21(
         }
     }
     
+    //MAXIMUM
     //get max for each groups cov matrix
     for(int i = 0; i < dim0; i++){
         gn_max_temp[i] = gn_cov_temp[i*I*I];
@@ -8522,7 +8533,7 @@ static void optimized_groupnorm_v21(
     }}
 
 
-    //cholesky decomp
+    //CHOLESKY
 
     //reshape
     for(int i = 0; i < dim0; i+=8){ //jump 8 cov mats
@@ -8606,6 +8617,7 @@ static void optimized_groupnorm_v21(
     }
 
 
+    //BACK SUBSTITUTION
     //invert the diagaonal first then
     for(int i = 0; i < dim0; i++){
         for(int d = 0; d < I; d++){
@@ -8614,7 +8626,6 @@ static void optimized_groupnorm_v21(
         }
     }
 
-    
     //reshape
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < num_groups*D; j += 8){
@@ -8695,7 +8706,7 @@ static void optimized_groupnorm_v21(
         }
     }
 
-    //blow up weight and bias
+    //SCALING
     if ( scaling ){
 
         //just a transpose
@@ -8757,65 +8768,6 @@ static void optimized_groupnorm_v21(
         }
     }
 
-    /*
-    //blow up weight and bias
-    if ( scaling ){
-        for(int i = 0; i < I; i++){
-            for(int ii = 0; ii < I; ii++){
-                for(int j = 0; j < group_size; j++){
-                    for(int l = 0; l < B; l++){
-                        gn_weight_temp[i*I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*I*group_size + ii*group_size + ((j*B + l)%group_size)];
-                    }
-                }
-            }
-        }
-        
-        for(int i = 0; i < I; i++){
-            for(int j = 0; j < group_size; j++){
-                for(int l = 0; l < B; l++){
-                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
-                }
-            }
-        }
-    
-        //scaling or just copy over
-        //permute weight from (I0, I1, dim0) to (dim0, I0, I1)
-        //think their code is wrong since they dont permute the bias and just reshape it...
-        for(int i = 0; i < I*I; i++){
-            for(int j = 0; j < dim0; j++){
-                gn_weight_perm_temp[j*I*I + i] = gn_weight_temp[i*dim0 + j];
-            }
-        }
-
-        //mat mult and add
-        float vecmult[8]; //put this on the stack since 3D is max size anyways
-        for(int i = 0; i < dim0; i++){
-            for(int j = 0; j < num_groups; j++){
-                for(int l = 0; l < D; l++){
-                    //xn = Wx + b
-                    float *W = gn_weight_perm_temp + i*I*I;
-                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
-                    float *b = gn_bias_temp + i*I;
-                    //(I,I)x(I,1)
-                    for(int ii = 0; ii < I; ii++){
-                        vecmult[ii] = 0.0f;
-                        for(int jj = 0; jj < I; jj++){
-                            FLOP(1);
-                            FLOP(1);
-                            vecmult[ii] += W[ii*I + jj] * xv[jj];
-                        }
-                        FLOP(1);
-                        vecmult[ii] += b[ii];
-                    }
-                    for(int ii = 0; ii < I; ii++){
-                        xv[ii] = vecmult[ii];
-                    }
-                }
-            }
-        }
-    }
-    */
-
     return;
 }
 
@@ -8848,7 +8800,7 @@ static void optimized_groupnorm_v22(
     assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
     assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
 
-    //mean
+    //CENTERING
     __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
     for(int i = 0; i < dim0; i++){
         //calc mean
@@ -8886,7 +8838,7 @@ static void optimized_groupnorm_v22(
         }
     }
 
-    //calc cov
+    //CACULATE COV
     float cov_scale = 1.0f / ((float)(D*num_groups));
     for(int i = 0; i < dim0; i++){
         for(int j = 0; j < I; j++){ //row selector
@@ -8929,7 +8881,7 @@ static void optimized_groupnorm_v22(
         }
     }
     
-
+    //MAXIMUM
     //get max for each groups cov matrix
     for(int i = 0; i < dim0; i++){
         gn_max_temp[i] = gn_cov_temp[i*I*I];
@@ -8947,7 +8899,7 @@ static void optimized_groupnorm_v22(
     
 
 
-    //cholesky decomp
+    //CHOLESKY
 
     //reshape
     for(int i = 0; i < dim0; i+=8){ //jump 8 cov mats
@@ -9030,7 +8982,7 @@ static void optimized_groupnorm_v22(
         }
     }
 
-
+    //BACK SUBSTITUTION
     //invert the diagaonal first then
     for(int i = 0; i < dim0; i++){
         for(int d = 0; d < I; d++){
@@ -9121,7 +9073,7 @@ static void optimized_groupnorm_v22(
     }
     
 
-    //blow up weight and bias
+    //SCALING
     if ( scaling ){
 
         //just a transpose
@@ -9168,65 +9120,6 @@ static void optimized_groupnorm_v22(
             }
         }
     }
-
-    /*
-    //blow up weight and bias
-    if ( scaling ){
-        for(int i = 0; i < I; i++){
-            for(int ii = 0; ii < I; ii++){
-                for(int j = 0; j < group_size; j++){
-                    for(int l = 0; l < B; l++){
-                        gn_weight_temp[i*I*group_size*B + ii*group_size*B + j*B + l] = weight_orig[i*I*group_size + ii*group_size + ((j*B + l)%group_size)];
-                    }
-                }
-            }
-        }
-        
-        for(int i = 0; i < I; i++){
-            for(int j = 0; j < group_size; j++){
-                for(int l = 0; l < B; l++){
-                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
-                }
-            }
-        }
-    
-        //scaling or just copy over
-        //permute weight from (I0, I1, dim0) to (dim0, I0, I1)
-        //think their code is wrong since they dont permute the bias and just reshape it...
-        for(int i = 0; i < I*I; i++){
-            for(int j = 0; j < dim0; j++){
-                gn_weight_perm_temp[j*I*I + i] = gn_weight_temp[i*dim0 + j];
-            }
-        }
-
-        //mat mult and add
-        float vecmult[8]; //put this on the stack since 3D is max size anyways
-        for(int i = 0; i < dim0; i++){
-            for(int j = 0; j < num_groups; j++){
-                for(int l = 0; l < D; l++){
-                    //xn = Wx + b
-                    float *W = gn_weight_perm_temp + i*I*I;
-                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
-                    float *b = gn_bias_temp + i*I;
-                    //(I,I)x(I,1)
-                    for(int ii = 0; ii < I; ii++){
-                        vecmult[ii] = 0.0f;
-                        for(int jj = 0; jj < I; jj++){
-                            FLOP(1);
-                            FLOP(1);
-                            vecmult[ii] += W[ii*I + jj] * xv[jj];
-                        }
-                        FLOP(1);
-                        vecmult[ii] += b[ii];
-                    }
-                    for(int ii = 0; ii < I; ii++){
-                        xv[ii] = vecmult[ii];
-                    }
-                }
-            }
-        }
-    }
-    */
 
     return;
 }
@@ -9319,6 +9212,26 @@ static void optimized_groupnorm_all_dim(
     return;
 }
 
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//README section
+/*
+    - The baseline versions were developed in /csrc/clifford_groupnorm.c. For the optimization we moved
+      to this file and started to use global variables for the _temp arrays
+    - Starting with the python version the variable num_groups was adapted. But for the way the the varaible
+      is used, it seems that this variable refers to the size of a group. An example that would suggest this is
+      that when we sum the mean we sum over num_groups*D multivectors, but rather one would expect to sum over
+      "size of one group"*D when calculating the mean within one group. Wheter the naming as it is now is right
+      or wrong is not clear. This is mentioned here to aid understanding.
+    - Versions v1 - v12, v16 - v20 are 3D only
+    - Versions v14 and v21 are 2D only
+    - Versions v15 and v22 are 1D only
+    - Versions baseline, v0, v13 and all_dim work on 1D, 2D and 3D
+    - Versions v20 (3D), v21 (2D) and v22 (1D) are the most optimzed versions for each dimension
+      and have the 6 steps from the report indicated in CAPS
+*/
+//!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
 // ——— Register them in the order you want them tested ———
 void register_groupnorm_functions(void) {
     add_groupnorm_function(baseline_groupnorm,      "baseline_groupnorm");
@@ -9348,6 +9261,6 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v20, "optimized_groupnorm_v20"); //vectorized scaling 4 accumlators
     
     //add_groupnorm_function(optimized_groupnorm_v21, "optimized_groupnorm_v21"); //2D version, scaling optimization (base v14) (scaling base v20)
-    //add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //21 version, scaling optimization (base v15) (scaling base v21)
+    //add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //1D version, scaling optimization (base v15) (scaling base v21)
     add_groupnorm_function(optimized_groupnorm_all_dim, "optimized_groupnorm_all_dim"); //switch to best version of each dimention
 }
