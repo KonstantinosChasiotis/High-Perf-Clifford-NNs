@@ -9125,6 +9125,1213 @@ static void optimized_groupnorm_v22(
 }
 
 
+static void optimized_groupnorm_v23(
+    const float *x,
+    int           B,
+    int           C,
+    int           D,
+    int           I,
+    int           num_groups,
+    bool          running,
+    float        *running_mean_orig,
+    float        *running_cov_orig,
+    bool          scaling,
+    const float  *weight_orig,
+    const float  *bias_orig,
+    bool          training,
+    float         momentum,
+    float         eps,
+    float        *x_norm
+) {
+
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+    
+    assert(I == 8); //optimized for 3D (2D or 1D need addaptions to the cov calculation)
+    assert(dim0 >= 8); //use gn_max_temp different now so needs to be at least 8 long (would need adaption but could also be changed)
+    assert(dim0 % 8 == 0); //for cholesky decomp with avx (could be lifted with rollup)
+    assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
+    assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
+
+    //CENTERING
+    __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        //calc mean
+        __m256 accum0 = _mm256_setzero_ps();
+        __m256 accum1 = _mm256_setzero_ps();
+        __m256 accum2 = _mm256_setzero_ps();
+        __m256 accum3 = _mm256_setzero_ps();
+        __m256 accum4 = _mm256_setzero_ps();
+        __m256 accum5 = _mm256_setzero_ps();
+        __m256 accum6 = _mm256_setzero_ps();
+        __m256 accum7 = _mm256_setzero_ps(); // use 8 accumulators because _mm256_fmadd_ps has latency 4 and intel tp 0.5
+        for(int k = 0; k < num_groups*D; k+=8){
+            __m256 row0 = _mm256_loadu_ps(&x[i*num_groups*D*I + k*8]);
+            __m256 row1 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+1)*8]);
+            __m256 row2 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+2)*8]);
+            __m256 row3 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+3)*8]);
+            __m256 row4 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+4)*8]);
+            __m256 row5 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+5)*8]);
+            __m256 row6 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+6)*8]);
+            __m256 row7 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+7)*8]);
+
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, row0);
+            FLOP(8);
+            accum1 = _mm256_add_ps(accum1, row1);
+            FLOP(8);
+            accum2 = _mm256_add_ps(accum2, row2);
+            FLOP(8);
+            accum3 = _mm256_add_ps(accum3, row3);
+            FLOP(8);
+            accum4 = _mm256_add_ps(accum4, row4);
+            FLOP(8);
+            accum5 = _mm256_add_ps(accum5, row5);
+            FLOP(8);
+            accum6 = _mm256_add_ps(accum6, row6);
+            FLOP(8);
+            accum7 = _mm256_add_ps(accum7, row7);
+        }
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum1);
+        FLOP(8);
+        accum2 = _mm256_add_ps(accum2, accum3);
+        FLOP(8);
+        accum4 = _mm256_add_ps(accum4, accum5);
+        FLOP(8);
+        accum6 = _mm256_add_ps(accum6, accum7);
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum2);
+        FLOP(8);
+        accum4 = _mm256_add_ps(accum4, accum6);
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum4);
+        FLOP(8);
+        accum0 = _mm256_mul_ps(accum0, mean_scale);
+        
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                __m256 row = _mm256_loadu_ps(&x[i*num_groups*D*I + j*D*I + k*I]);
+                FLOP(8);
+                row = _mm256_sub_ps(row, accum0);
+                _mm256_storeu_ps(&x_norm[i*num_groups*D*I + j*D*I + k*I], row);
+            }
+        }
+    }
+
+    //CALCULATE COV
+    __m256 cov_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            __m256 accum0 = _mm256_setzero_ps();
+            __m256 accum1 = _mm256_setzero_ps();
+            __m256 accum2 = _mm256_setzero_ps();
+            __m256 accum3 = _mm256_setzero_ps();
+            __m256 accum4 = _mm256_setzero_ps();
+            __m256 accum5 = _mm256_setzero_ps();
+            __m256 accum6 = _mm256_setzero_ps();
+            __m256 accum7 = _mm256_setzero_ps(); // use 8 accumulators because _mm256_fmadd_ps has latency 4 and intel tp 0.5
+            for(int k = 0; k < num_groups*D; k+=8){
+                __m256 j_part0 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + k*I + j]);
+                __m256 j_part1 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+1)*I + j]);
+                __m256 j_part2 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+2)*I + j]);
+                __m256 j_part3 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+3)*I + j]);
+                __m256 j_part4 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+4)*I + j]);
+                __m256 j_part5 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+5)*I + j]);
+                __m256 j_part6 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+6)*I + j]);
+                __m256 j_part7 = _mm256_broadcast_ss(&x_norm[i*num_groups*D*I + (k+7)*I + j]);
+
+                __m256 l_part0 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + k*I]);
+                __m256 l_part1 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+1)*I]);
+                __m256 l_part2 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+2)*I]);
+                __m256 l_part3 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+3)*I]);
+                __m256 l_part4 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+4)*I]);
+                __m256 l_part5 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+5)*I]);
+                __m256 l_part6 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+6)*I]);
+                __m256 l_part7 = _mm256_loadu_ps(&x_norm[i*num_groups*D*I + (k+7)*I]);
+
+                FLOP(16);
+                accum0 = _mm256_fmadd_ps(j_part0, l_part0, accum0);
+                FLOP(16);
+                accum1 = _mm256_fmadd_ps(j_part1, l_part1, accum1);
+                FLOP(16);
+                accum2 = _mm256_fmadd_ps(j_part2, l_part2, accum2);
+                FLOP(16);
+                accum3 = _mm256_fmadd_ps(j_part3, l_part3, accum3);
+                FLOP(16);
+                accum4 = _mm256_fmadd_ps(j_part4, l_part4, accum4);
+                FLOP(16);
+                accum5 = _mm256_fmadd_ps(j_part5, l_part5, accum5);
+                FLOP(16);
+                accum6 = _mm256_fmadd_ps(j_part6, l_part6, accum6);
+                FLOP(16);
+                accum7 = _mm256_fmadd_ps(j_part7, l_part7, accum7);
+            }
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum1);
+            FLOP(8);
+            accum2 = _mm256_add_ps(accum2, accum3);
+            FLOP(8);
+            accum4 = _mm256_add_ps(accum4, accum5);
+            FLOP(8);
+            accum6 = _mm256_add_ps(accum6, accum7);
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum2);
+            FLOP(8);
+            accum4 = _mm256_add_ps(accum4, accum6);
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, accum4);
+            FLOP(8);
+            accum0 = _mm256_mul_ps(accum0, cov_scale);
+            _mm256_storeu_ps(&gn_cov_temp[i*I*I + j*I], accum0);
+        }
+    }
+
+    //MAXIMUM
+    for(int i = 0; i < dim0; i++){
+        __m256 maxv0 = _mm256_loadu_ps(&gn_cov_temp[i*I*I]);
+        __m256 maxv1 = _mm256_loadu_ps(&gn_cov_temp[i*I*I + 8]);
+        __m256 maxv2 = _mm256_loadu_ps(&gn_cov_temp[i*I*I + 16]);
+        __m256 maxv3 = _mm256_loadu_ps(&gn_cov_temp[i*I*I] + 24);
+        __m256 maxv4 = _mm256_loadu_ps(&gn_cov_temp[i*I*I] + 32);
+        __m256 maxv5 = _mm256_loadu_ps(&gn_cov_temp[i*I*I] + 40);
+        __m256 maxv6 = _mm256_loadu_ps(&gn_cov_temp[i*I*I] + 48);
+        __m256 maxv7 = _mm256_loadu_ps(&gn_cov_temp[i*I*I] + 56);
+
+        maxv0 = _mm256_max_ps(maxv0, maxv1);
+        maxv2 = _mm256_max_ps(maxv2, maxv3);
+        maxv4 = _mm256_max_ps(maxv4, maxv5);
+        maxv6 = _mm256_max_ps(maxv6, maxv7);
+        maxv0 = _mm256_max_ps(maxv0, maxv2);
+        maxv4 = _mm256_max_ps(maxv4, maxv6);
+        maxv0 = _mm256_max_ps(maxv0, maxv4);
+        _mm256_storeu_ps(gn_max_temp, maxv0);
+        float max = gn_max_temp[0];
+        for(int j = 1; j < I; j++){
+            max = gn_max_temp[j] > max ? gn_max_temp[j] : max;
+        }
+        FLOP(1);
+        max = max*eps;
+        for(int j = 0; j < I; j++){
+            FLOP(1);
+            gn_cov_temp[i*I*I + j*I + j] += max;
+        }
+    }
+
+    //CHOLESKY
+
+    /*
+    //reshape
+    for(int i = 0; i < dim0; i+=8){ //jump 8 cov mats
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_X_temp[i*I*I + k*8 + j] = gn_cov_temp[i*I*I + j*I*I + k];
+            }
+        }
+    }
+    */
+    __m256 one = _mm256_set1_ps(1.0f);
+    for(int i = 0; i < dim0; i+=8){
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_X_temp[i*I*I + k*8 + j] = gn_cov_temp[i*I*I + j*I*I + k];
+            }
+        }
+        int n = I;
+        float *a = &gn_X_temp[i*I*I];
+        //float x, r;
+        int ii, j, k;
+        // Loop over columns
+        for(j = 0; j < n; j++) {
+            // i = j
+            //x = a[j*n+j];  //A_jj 
+            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            
+            for(k = 0; k < j; k++){
+                //FLOP(2);
+                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
+                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                FLOP(8);
+                temp = _mm256_mul_ps(temp, temp);
+                FLOP(8);
+                x = _mm256_sub_ps(x, temp);
+            }
+
+            //if(x < 0)
+            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
+
+            //FLOP(30);
+            //x = sqrt(x);
+            FLOP(8*30);
+            x = _mm256_sqrt_ps(x);
+
+            //a[j*n+j] = x;  // L_jj
+            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+
+            //FLOP(1);
+            //r = 1.0 / x;
+            FLOP(8);
+            __m256 r = _mm256_div_ps(one, x);
+            
+
+            // i != j 
+            for(ii = j+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+
+                for(k = 0; k < j; k++){
+                    //FLOP(2);
+                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                    __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    FLOP(8);
+                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    FLOP(8);
+                    x1 = _mm256_sub_ps(x1, temp0);
+                }
+                //FLOP(1);
+                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
+                FLOP(8);
+                __m256 tostore = _mm256_mul_ps(x1, r);
+                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+            }
+        }
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_cov_temp[i*I*I + j*I*I + k] = gn_X_temp[i*I*I + k*8 + j];
+            }
+        }
+    }
+
+    /*
+    //reshape back
+    for(int i = 0; i < dim0; i+=8){ //jump 8 cov mats
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_cov_temp[i*I*I + j*I*I + k] = gn_X_temp[i*I*I + k*8 + j];
+            }
+        }
+    }
+    */
+
+    //BACK SUBSTITUTION
+    /*
+    //invert the diagaonal first then
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+    }
+
+    
+    //reshape
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*num_groups*D*I + j*I + l*I + k] = x_norm[i*num_groups*D*I + j*I + k*I + l];
+                }
+            }
+        }
+    }
+    */
+    
+    //vectorized backsubstitution
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*num_groups*D*I + j*I + l*I + k] = x_norm[i*num_groups*D*I + j*I + k*I + l];
+                }
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 32){
+            float *mat = gn_cov_temp + (i*I*I);
+            float *vec0 = gn_X_temp + (i*num_groups*D*I + j*I); //8xI vector
+            float *vec1 = gn_X_temp + (i*num_groups*D*I + (j+8)*I); //8xI vector
+            float *vec2 = gn_X_temp + (i*num_groups*D*I + (j+16)*I); //8xI vector
+            float *vec3 = gn_X_temp + (i*num_groups*D*I + (j+24)*I); //8xI vector
+            for(int r = I-1; r >= 0; r--){//from last row to first
+                //float rowsum = 0.0f;
+                __m256 rowsum0 = _mm256_setzero_ps();
+                __m256 rowsum1 = _mm256_setzero_ps();
+                __m256 rowsum2 = _mm256_setzero_ps();
+                __m256 rowsum3 = _mm256_setzero_ps();
+                for(int c = I-1; c > r; c--){//do the partioal vec row mult
+                    __m256 vec_elem0 = _mm256_loadu_ps(&vec0[c*8]);
+                    __m256 vec_elem1 = _mm256_loadu_ps(&vec1[c*8]);
+                    __m256 vec_elem2 = _mm256_loadu_ps(&vec2[c*8]);
+                    __m256 vec_elem3 = _mm256_loadu_ps(&vec3[c*8]);
+                    __m256 mat_elem = _mm256_broadcast_ss(&mat[c*I + r]);
+                    FLOP(16);
+                    rowsum0 = _mm256_fmadd_ps(mat_elem, vec_elem0, rowsum0);
+                    FLOP(16);
+                    rowsum1 = _mm256_fmadd_ps(mat_elem, vec_elem1, rowsum1);
+                    FLOP(16);
+                    rowsum2 = _mm256_fmadd_ps(mat_elem, vec_elem2, rowsum2);
+                    FLOP(16);
+                    rowsum3 = _mm256_fmadd_ps(mat_elem, vec_elem3, rowsum3);
+                }
+                __m256 vec_elem0 = _mm256_loadu_ps(&vec0[r*8]);
+                __m256 vec_elem1 = _mm256_loadu_ps(&vec1[r*8]);
+                __m256 vec_elem2 = _mm256_loadu_ps(&vec2[r*8]);
+                __m256 vec_elem3 = _mm256_loadu_ps(&vec3[r*8]);
+                FLOP(8);
+                rowsum0 = _mm256_sub_ps(vec_elem0, rowsum0);
+                FLOP(8);
+                rowsum1 = _mm256_sub_ps(vec_elem1, rowsum1);
+                FLOP(8);
+                rowsum2 = _mm256_sub_ps(vec_elem2, rowsum2);
+                FLOP(8);
+                rowsum3 = _mm256_sub_ps(vec_elem3, rowsum3);
+                __m256 mat_elem = _mm256_broadcast_ss(&mat[r*I + r]);
+                FLOP(8);
+                __m256 res0 = _mm256_mul_ps(rowsum0, mat_elem);
+                FLOP(8);
+                __m256 res1 = _mm256_mul_ps(rowsum1, mat_elem);
+                FLOP(8);
+                __m256 res2 = _mm256_mul_ps(rowsum2, mat_elem);
+                FLOP(8);
+                __m256 res3 = _mm256_mul_ps(rowsum3, mat_elem);
+                _mm256_storeu_ps(&vec0[r*8], res0);
+                _mm256_storeu_ps(&vec1[r*8], res1);
+                _mm256_storeu_ps(&vec2[r*8], res2);
+                _mm256_storeu_ps(&vec3[r*8], res3);
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    x_norm[i*num_groups*D*I + j*I + k*I + l] = gn_X_temp[i*num_groups*D*I + j*I + l*I + k];
+                }
+            }
+        }
+    }
+    
+    /*
+    //reshape
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    x_norm[i*num_groups*D*I + j*I + k*I + l] = gn_X_temp[i*num_groups*D*I + j*I + l*I + k];
+                }
+            }
+        }
+    }
+    */
+    
+    //SCALING
+    if ( scaling ){
+
+        //just a transpose
+        for(int i = 0; i < I; i++){
+            for(int ii = 0; ii < I; ii++){
+                for(int j = 0; j < group_size; j++){
+                        gn_weight_temp[j*I*I + ii*I + i] = weight_orig[i*I*group_size + ii*group_size + j];
+                }
+            }
+        }
+
+        for(int i = 0; i < I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+        
+
+        //mat mult and add
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *WT = gn_weight_temp + (i%group_size)*I*I;
+                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
+                    float *b = gn_bias_temp + i*I;
+
+                    //1) load in b as base
+                    //4 accumulators
+                    __m256 accum0 = _mm256_loadu_ps(b);
+                    __m256 accum1 = _mm256_setzero_ps();
+                    __m256 accum2 = _mm256_setzero_ps();
+                    __m256 accum3 = _mm256_setzero_ps();
+                    
+                    //2) iterate W cols with fma (note we have W^T)
+                    //use each of the 4 accum to do 2 cols
+                    for(int ii = 0; ii < 2; ii++){
+                        __m256 col0 = _mm256_loadu_ps(&WT[(ii*4 + 0)*I]);
+                        __m256 col1 = _mm256_loadu_ps(&WT[(ii*4 + 1)*I]);
+                        __m256 col2 = _mm256_loadu_ps(&WT[(ii*4 + 2)*I]);
+                        __m256 col3 = _mm256_loadu_ps(&WT[(ii*4 + 3)*I]);
+
+                        __m256 xv_part0 = _mm256_broadcast_ss(&xv[(ii*4 + 0)]);
+                        __m256 xv_part1 = _mm256_broadcast_ss(&xv[(ii*4 + 1)]);
+                        __m256 xv_part2 = _mm256_broadcast_ss(&xv[(ii*4 + 2)]);
+                        __m256 xv_part3 = _mm256_broadcast_ss(&xv[(ii*4 + 3)]);
+
+                        FLOP(16);
+                        accum0 = _mm256_fmadd_ps(col0, xv_part0, accum0);
+                        FLOP(16);
+                        accum1 = _mm256_fmadd_ps(col1, xv_part1, accum1);
+                        FLOP(16);
+                        accum2 = _mm256_fmadd_ps(col2, xv_part2, accum2); 
+                        FLOP(16);
+                        accum3 = _mm256_fmadd_ps(col3, xv_part3, accum3);
+                    }
+
+                    //reduction on accums
+                    FLOP(8);
+                    accum0 = _mm256_add_ps(accum0, accum1);
+                    FLOP(8);
+                    accum2 = _mm256_add_ps(accum2, accum3);
+                    FLOP(8);
+                    accum0 = _mm256_add_ps(accum0, accum2);
+
+                    //3) store back result
+                    _mm256_storeu_ps(xv, accum0);
+                    
+                }
+            }
+        }
+    }
+
+    return;
+}
+
+
+static void optimized_groupnorm_v24(
+    const float *x,
+    int           B,
+    int           C,
+    int           D,
+    int           I,
+    int           num_groups,
+    bool          running,
+    float        *running_mean_orig,
+    float        *running_cov_orig,
+    bool          scaling,
+    const float  *weight_orig,
+    const float  *bias_orig,
+    bool          training,
+    float         momentum,
+    float         eps,
+    float        *x_norm
+) {
+
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+    
+    assert(I == 4); //optimized for 3D (2D or 1D need addaptions to the cov calculation)
+    assert(dim0 >= 8); //use gn_max_temp different now so needs to be at least 8 long (would need adaption but could also be changed)
+    assert(dim0 % 8 == 0); //for cholesky decomp with avx (could be lifted with rollup)
+    assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
+    assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
+   
+    //CENTERING
+    __m128 mean_scale = _mm_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        //calc mean
+        __m128 accum0 = _mm_setzero_ps();
+        __m128 accum1 = _mm_setzero_ps();
+        __m128 accum2 = _mm_setzero_ps();
+        __m128 accum3 = _mm_setzero_ps();
+        __m128 accum4 = _mm_setzero_ps();
+        __m128 accum5 = _mm_setzero_ps();
+        __m128 accum6 = _mm_setzero_ps();
+        __m128 accum7 = _mm_setzero_ps(); // use 8 accumulators because _mm_fmadd_ps has latency 4 and intel tp 0.5
+        for(int k = 0; k < num_groups*D; k+=8){
+            __m128 row0 = _mm_loadu_ps(&x[i*num_groups*D*I + k*I]);
+            __m128 row1 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+1)*I]);
+            __m128 row2 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+2)*I]);
+            __m128 row3 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+3)*I]);
+            __m128 row4 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+4)*I]);
+            __m128 row5 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+5)*I]);
+            __m128 row6 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+6)*I]);
+            __m128 row7 = _mm_loadu_ps(&x[i*num_groups*D*I + (k+7)*I]);
+
+            FLOP(4);
+            accum0 = _mm_add_ps(accum0, row0);
+            FLOP(4);
+            accum1 = _mm_add_ps(accum1, row1);
+            FLOP(4);
+            accum2 = _mm_add_ps(accum2, row2);
+            FLOP(4);
+            accum3 = _mm_add_ps(accum3, row3);
+            FLOP(4);
+            accum4 = _mm_add_ps(accum4, row4);
+            FLOP(4);
+            accum5 = _mm_add_ps(accum5, row5);
+            FLOP(4);
+            accum6 = _mm_add_ps(accum6, row6);
+            FLOP(4);
+            accum7 = _mm_add_ps(accum7, row7);
+        }
+        FLOP(4);
+        accum0 = _mm_add_ps(accum0, accum1);
+        FLOP(4);
+        accum2 = _mm_add_ps(accum2, accum3);
+        FLOP(4);
+        accum4 = _mm_add_ps(accum4, accum5);
+        FLOP(4);
+        accum6 = _mm_add_ps(accum6, accum7);
+        FLOP(4);
+        accum0 = _mm_add_ps(accum0, accum2);
+        FLOP(4);
+        accum4 = _mm_add_ps(accum4, accum6);
+        FLOP(4);
+        accum0 = _mm_add_ps(accum0, accum4);
+        FLOP(4);
+        accum0 = _mm_mul_ps(accum0, mean_scale);
+        
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k++){
+                __m128 row = _mm_loadu_ps(&x[i*num_groups*D*I + j*D*I + k*I]);
+                FLOP(4);
+                row = _mm_sub_ps(row, accum0);
+                _mm_storeu_ps(&x_norm[i*num_groups*D*I + j*D*I + k*I], row);
+            }
+        }
+    }
+
+    //CALCULATE COV
+    __m128 cov_scale = _mm_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            __m128 accum0 = _mm_setzero_ps();
+            __m128 accum1 = _mm_setzero_ps();
+            __m128 accum2 = _mm_setzero_ps();
+            __m128 accum3 = _mm_setzero_ps();
+            __m128 accum4 = _mm_setzero_ps();
+            __m128 accum5 = _mm_setzero_ps();
+            __m128 accum6 = _mm_setzero_ps();
+            __m128 accum7 = _mm_setzero_ps(); // use 8 accumulators because _mm_fmadd_ps has latency 4 and intel tp 0.5
+            for(int k = 0; k < num_groups*D; k+=8){
+                __m128 j_part0 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + k*I + j]);
+                __m128 j_part1 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+1)*I + j]);
+                __m128 j_part2 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+2)*I + j]);
+                __m128 j_part3 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+3)*I + j]);
+                __m128 j_part4 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+4)*I + j]);
+                __m128 j_part5 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+5)*I + j]);
+                __m128 j_part6 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+6)*I + j]);
+                __m128 j_part7 = _mm_broadcast_ss(&x_norm[i*num_groups*D*I + (k+7)*I + j]);
+
+                __m128 l_part0 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + k*I]);
+                __m128 l_part1 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+1)*I]);
+                __m128 l_part2 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+2)*I]);
+                __m128 l_part3 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+3)*I]);
+                __m128 l_part4 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+4)*I]);
+                __m128 l_part5 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+5)*I]);
+                __m128 l_part6 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+6)*I]);
+                __m128 l_part7 = _mm_loadu_ps(&x_norm[i*num_groups*D*I + (k+7)*I]);
+
+                FLOP(8);
+                accum0 = _mm_fmadd_ps(j_part0, l_part0, accum0);
+                FLOP(8);
+                accum1 = _mm_fmadd_ps(j_part1, l_part1, accum1);
+                FLOP(8);
+                accum2 = _mm_fmadd_ps(j_part2, l_part2, accum2);
+                FLOP(8);
+                accum3 = _mm_fmadd_ps(j_part3, l_part3, accum3);
+                FLOP(8);
+                accum4 = _mm_fmadd_ps(j_part4, l_part4, accum4);
+                FLOP(8);
+                accum5 = _mm_fmadd_ps(j_part5, l_part5, accum5);
+                FLOP(8);
+                accum6 = _mm_fmadd_ps(j_part6, l_part6, accum6);
+                FLOP(8);
+                accum7 = _mm_fmadd_ps(j_part7, l_part7, accum7);
+            }
+            FLOP(4);
+            accum0 = _mm_add_ps(accum0, accum1);
+            FLOP(4);
+            accum2 = _mm_add_ps(accum2, accum3);
+            FLOP(4);
+            accum4 = _mm_add_ps(accum4, accum5);
+            FLOP(4);
+            accum6 = _mm_add_ps(accum6, accum7);
+            FLOP(4);
+            accum0 = _mm_add_ps(accum0, accum2);
+            FLOP(4);
+            accum4 = _mm_add_ps(accum4, accum6);
+            FLOP(4);
+            accum0 = _mm_add_ps(accum0, accum4);
+            FLOP(4);
+            accum0 = _mm_mul_ps(accum0, cov_scale);
+            _mm_storeu_ps(&gn_cov_temp[i*I*I + j*I], accum0);
+        }
+    }
+    
+    //MAXIMUM
+    //get max for each groups cov matrix
+    for(int i = 0; i < dim0; i++){
+        gn_max_temp[i] = gn_cov_temp[i*I*I];
+        for(int j = 1; j < I*I; j++){
+            gn_max_temp[i] = gn_cov_temp[i*I*I + j] > gn_max_temp[i] ? gn_cov_temp[i*I*I + j] : gn_max_temp[i];
+        }
+    }
+
+    //add pertubation to diagonal
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){
+            FLOP(2);
+            gn_cov_temp[i*I*I + j*I + j] += gn_max_temp[i]*eps;
+    }}
+
+
+    //CHOLESKY
+
+    __m256 one = _mm256_set1_ps(1.0f);
+    for(int i = 0; i < dim0; i+=8){
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_X_temp[i*I*I + k*8 + j] = gn_cov_temp[i*I*I + j*I*I + k];
+            }
+        }
+        int n = I;
+        float *a = &gn_X_temp[i*I*I];
+        //float x, r;
+        int ii, j, k;
+        // Loop over columns
+        for(j = 0; j < n; j++) {
+            // i = j
+            //x = a[j*n+j];  //A_jj 
+            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            
+            for(k = 0; k < j; k++){
+                //FLOP(2);
+                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
+                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                FLOP(8);
+                temp = _mm256_mul_ps(temp, temp);
+                FLOP(8);
+                x = _mm256_sub_ps(x, temp);
+            }
+
+            //if(x < 0)
+            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
+
+            //FLOP(30);
+            //x = sqrt(x);
+            FLOP(8*30);
+            x = _mm256_sqrt_ps(x);
+
+            //a[j*n+j] = x;  // L_jj
+            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+
+            //FLOP(1);
+            //r = 1.0 / x;
+            FLOP(8);
+            __m256 r = _mm256_div_ps(one, x);
+            
+
+            // i != j 
+            for(ii = j+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+
+                for(k = 0; k < j; k++){
+                    //FLOP(2);
+                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                    __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    FLOP(8);
+                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    FLOP(8);
+                    x1 = _mm256_sub_ps(x1, temp0);
+                }
+                //FLOP(1);
+                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
+                FLOP(8);
+                __m256 tostore = _mm256_mul_ps(x1, r);
+                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+            }
+        }
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_cov_temp[i*I*I + j*I*I + k] = gn_X_temp[i*I*I + k*8 + j];
+            }
+        }
+    }
+
+    //BACK SUBSTITUTION
+    //vectorized backsubstitution
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*num_groups*D*I + j*I + l*8 + k] = x_norm[i*num_groups*D*I + j*I + k*I + l];
+                }
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 32){
+            float *mat = gn_cov_temp + (i*I*I);
+            float *vec0 = gn_X_temp + (i*num_groups*D*I + j*I); //8xI vector
+            float *vec1 = gn_X_temp + (i*num_groups*D*I + (j+8)*I); //8xI vector
+            float *vec2 = gn_X_temp + (i*num_groups*D*I + (j+16)*I); //8xI vector
+            float *vec3 = gn_X_temp + (i*num_groups*D*I + (j+24)*I); //8xI vector
+            for(int r = I-1; r >= 0; r--){//from last row to first
+                //float rowsum = 0.0f;
+                __m256 rowsum0 = _mm256_setzero_ps();
+                __m256 rowsum1 = _mm256_setzero_ps();
+                __m256 rowsum2 = _mm256_setzero_ps();
+                __m256 rowsum3 = _mm256_setzero_ps();
+                for(int c = I-1; c > r; c--){//do the partioal vec row mult
+                    __m256 vec_elem0 = _mm256_loadu_ps(&vec0[c*8]);
+                    __m256 vec_elem1 = _mm256_loadu_ps(&vec1[c*8]);
+                    __m256 vec_elem2 = _mm256_loadu_ps(&vec2[c*8]);
+                    __m256 vec_elem3 = _mm256_loadu_ps(&vec3[c*8]);
+                    __m256 mat_elem = _mm256_broadcast_ss(&mat[c*I + r]);
+                    FLOP(16);
+                    rowsum0 = _mm256_fmadd_ps(mat_elem, vec_elem0, rowsum0);
+                    FLOP(16);
+                    rowsum1 = _mm256_fmadd_ps(mat_elem, vec_elem1, rowsum1);
+                    FLOP(16);
+                    rowsum2 = _mm256_fmadd_ps(mat_elem, vec_elem2, rowsum2);
+                    FLOP(16);
+                    rowsum3 = _mm256_fmadd_ps(mat_elem, vec_elem3, rowsum3);
+                }
+                __m256 vec_elem0 = _mm256_loadu_ps(&vec0[r*8]);
+                __m256 vec_elem1 = _mm256_loadu_ps(&vec1[r*8]);
+                __m256 vec_elem2 = _mm256_loadu_ps(&vec2[r*8]);
+                __m256 vec_elem3 = _mm256_loadu_ps(&vec3[r*8]);
+                FLOP(8);
+                rowsum0 = _mm256_sub_ps(vec_elem0, rowsum0);
+                FLOP(8);
+                rowsum1 = _mm256_sub_ps(vec_elem1, rowsum1);
+                FLOP(8);
+                rowsum2 = _mm256_sub_ps(vec_elem2, rowsum2);
+                FLOP(8);
+                rowsum3 = _mm256_sub_ps(vec_elem3, rowsum3);
+                __m256 mat_elem = _mm256_broadcast_ss(&mat[r*I + r]);
+                FLOP(8);
+                __m256 res0 = _mm256_mul_ps(rowsum0, mat_elem);
+                FLOP(8);
+                __m256 res1 = _mm256_mul_ps(rowsum1, mat_elem);
+                FLOP(8);
+                __m256 res2 = _mm256_mul_ps(rowsum2, mat_elem);
+                FLOP(8);
+                __m256 res3 = _mm256_mul_ps(rowsum3, mat_elem);
+                _mm256_storeu_ps(&vec0[r*8], res0);
+                _mm256_storeu_ps(&vec1[r*8], res1);
+                _mm256_storeu_ps(&vec2[r*8], res2);
+                _mm256_storeu_ps(&vec3[r*8], res3);
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    x_norm[i*num_groups*D*I + j*I + k*I + l] = gn_X_temp[i*num_groups*D*I + j*I + l*8 + k];
+                }
+            }
+        }
+    }
+
+    //SCALING
+    if ( scaling ){
+
+        //just a transpose
+        for(int i = 0; i < I; i++){
+            for(int ii = 0; ii < I; ii++){
+                for(int j = 0; j < group_size; j++){
+                        gn_weight_temp[j*I*I + ii*I + i] = weight_orig[i*I*group_size + ii*group_size + j];
+                }
+            }
+        }
+
+        for(int i = 0; i < I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+        
+
+        //mat mult and add
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *WT = gn_weight_temp + (i%group_size)*I*I;
+                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
+                    float *b = gn_bias_temp + i*I;
+
+                    //1) load in b as base
+                    //4 accumulators
+                    __m128 accum0 = _mm_loadu_ps(b);
+                    __m128 accum1 = _mm_setzero_ps();
+                    
+                    //2) iterate W cols with fma (note we have W^T)
+                    //use each of the 4 accum to do 2 cols
+                    for(int ii = 0; ii < 2; ii++){
+                        __m128 col0 = _mm_loadu_ps(&WT[(ii*2 + 0)*I]);
+                        __m128 col1 = _mm_loadu_ps(&WT[(ii*2 + 1)*I]);
+
+                        __m128 xv_part0 = _mm_broadcast_ss(&xv[(ii*2 + 0)]);
+                        __m128 xv_part1 = _mm_broadcast_ss(&xv[(ii*2 + 1)]);
+
+                        FLOP(8);
+                        accum0 = _mm_fmadd_ps(col0, xv_part0, accum0);
+                        FLOP(8);
+                        accum1 = _mm_fmadd_ps(col1, xv_part1, accum1);
+                    }
+
+                    //reduction on accums
+                    FLOP(4);
+                    accum0 = _mm_add_ps(accum0, accum1);
+
+                    //3) store back result
+                    _mm_storeu_ps(xv, accum0);
+                    
+                }
+            }
+        }
+    }
+
+    return;
+}
+
+
+static void optimized_groupnorm_v25(
+    const float *x,
+    int           B,
+    int           C,
+    int           D,
+    int           I,
+    int           num_groups,
+    bool          running,
+    float        *running_mean_orig,
+    float        *running_cov_orig,
+    bool          scaling,
+    const float  *weight_orig,
+    const float  *bias_orig,
+    bool          training,
+    float         momentum,
+    float         eps,
+    float        *x_norm
+) {
+
+    int dim0 = (B*C)/num_groups;
+    int group_size = C/num_groups;
+    
+    assert(I == 2); //optimized for 3D (2D or 1D need addaptions to the cov calculation)
+    assert(dim0 >= 8); //use gn_max_temp different now so needs to be at least 8 long (would need adaption but could also be changed)
+    assert(dim0 % 8 == 0); //for cholesky decomp with avx (could be lifted with rollup)
+    assert(D*num_groups > I); //for the cholesky decomp reshape, so it fits into gn_X_temp
+    assert((D*num_groups)%32 == 0); //needs to be divisible for backsub vectorization, also needed for the accumulators in cov calculation (could be fixed with rollup)
+
+    //CENTERING
+    __m256 mean_scale = _mm256_set1_ps(1.0 / ((float)(D*num_groups)));
+    for(int i = 0; i < dim0; i++){
+        //calc mean
+        __m256 accum0 = _mm256_setzero_ps();
+        __m256 accum1 = _mm256_setzero_ps(); // use 2 accumulators with 4 rows each
+        for(int k = 0; k < num_groups*D; k+=8){
+            __m256 row0 = _mm256_loadu_ps(&x[i*num_groups*D*I + k*I]);
+            __m256 row1 = _mm256_loadu_ps(&x[i*num_groups*D*I + (k+4)*I]);
+
+            FLOP(8);
+            accum0 = _mm256_add_ps(accum0, row0);
+            FLOP(8);
+            accum1 = _mm256_add_ps(accum1, row1);
+        }
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum1);
+        __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum0_high);
+        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02) << 8) | 
+                                                                    ((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02));
+        FLOP(8);
+        accum0 = _mm256_add_ps(accum0, accum0_even_odd);
+        FLOP(8);
+        accum0 = _mm256_mul_ps(accum0, mean_scale); //4 copies of the 2 mean floats
+        
+
+        for(int j = 0; j < num_groups; j++){
+            for(int k = 0; k < D; k += 4){
+                __m256 row = _mm256_loadu_ps(&x[i*num_groups*D*I + j*D*I + k*I]);
+                FLOP(8);
+                row = _mm256_sub_ps(row, accum0);
+                _mm256_storeu_ps(&x_norm[i*num_groups*D*I + j*D*I + k*I], row);
+            }
+        }
+    }
+
+    //CACULATE COV
+    float cov_scale = 1.0f / ((float)(D*num_groups));
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){ //row selector
+            float accum0_col0 = 0.0f;
+            float accum0_col1 = 0.0f;
+            float accum1_col0 = 0.0f;
+            float accum1_col1 = 0.0f;
+            float accum2_col0 = 0.0f;
+            float accum2_col1 = 0.0f;
+            float accum3_col0 = 0.0f;
+            float accum3_col1 = 0.0f; // use 4 accumulators
+            for(int k = 0; k < num_groups*D; k+=4){
+                float j_part0 = x_norm[i*num_groups*D*I + k*I + j];
+                float j_part1 = x_norm[i*num_groups*D*I + (k+1)*I + j];
+                float j_part2 = x_norm[i*num_groups*D*I + (k+2)*I + j];
+                float j_part3 = x_norm[i*num_groups*D*I + (k+3)*I + j];
+
+                FLOP(8);
+                accum0_col0 = fmaf(j_part0, x_norm[i*num_groups*D*I + k*I], accum0_col0);
+                accum1_col0 = fmaf(j_part1, x_norm[i*num_groups*D*I + (k+1)*I], accum1_col0);
+                accum2_col0 = fmaf(j_part2, x_norm[i*num_groups*D*I + (k+2)*I], accum2_col0);
+                accum3_col0 = fmaf(j_part3, x_norm[i*num_groups*D*I + (k+3)*I], accum3_col0);
+
+                FLOP(8);
+                accum0_col1 = fmaf(j_part0, x_norm[i*num_groups*D*I + k*I + 1], accum0_col1);
+                accum1_col1 = fmaf(j_part1, x_norm[i*num_groups*D*I + (k+1)*I + 1], accum1_col1);
+                accum2_col1 = fmaf(j_part2, x_norm[i*num_groups*D*I + (k+2)*I + 1], accum2_col1);
+                accum3_col1 = fmaf(j_part3, x_norm[i*num_groups*D*I + (k+3)*I + 1], accum3_col1);
+            }
+            accum0_col0 = accum0_col0 + accum1_col0;
+            accum2_col0 = accum2_col0 + accum3_col0;
+            accum0_col0 = accum0_col0 + accum2_col0;
+
+            accum0_col1 = accum0_col1 + accum1_col1;
+            accum2_col1 = accum2_col1 + accum3_col1;
+            accum0_col1 = accum0_col1 + accum2_col1;
+
+            gn_cov_temp[i*I*I + j*I] = accum0_col0 * cov_scale;
+            gn_cov_temp[i*I*I + j*I + 1] = accum0_col1 * cov_scale;
+        }
+    }
+    
+    //MAXIMUM
+    //get max for each groups cov matrix
+    for(int i = 0; i < dim0; i++){
+        gn_max_temp[i] = gn_cov_temp[i*I*I];
+        for(int j = 1; j < I*I; j++){
+            gn_max_temp[i] = gn_cov_temp[i*I*I + j] > gn_max_temp[i] ? gn_cov_temp[i*I*I + j] : gn_max_temp[i];
+        }
+    }
+
+    //add pertubation to diagonal
+    for(int i = 0; i < dim0; i++){
+        for(int j = 0; j < I; j++){
+            FLOP(2);
+            gn_cov_temp[i*I*I + j*I + j] += gn_max_temp[i]*eps;
+    }}
+    
+
+
+    //CHOLESKY
+    __m256 one = _mm256_set1_ps(1.0f);
+    for(int i = 0; i < dim0; i+=8){
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_X_temp[i*I*I + k*8 + j] = gn_cov_temp[i*I*I + j*I*I + k];
+            }
+        }
+        int n = I;
+        float *a = &gn_X_temp[i*I*I];
+        //float x, r;
+        int ii, j, k;
+        // Loop over columns
+        for(j = 0; j < n; j++) {
+            // i = j
+            //x = a[j*n+j];  //A_jj 
+            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            
+            for(k = 0; k < j; k++){
+                //FLOP(2);
+                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
+                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                FLOP(8);
+                temp = _mm256_mul_ps(temp, temp);
+                FLOP(8);
+                x = _mm256_sub_ps(x, temp);
+            }
+
+            //if(x < 0)
+            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
+
+            //FLOP(30);
+            //x = sqrt(x);
+            FLOP(8*30);
+            x = _mm256_sqrt_ps(x);
+
+            //a[j*n+j] = x;  // L_jj
+            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+
+            //FLOP(1);
+            //r = 1.0 / x;
+            FLOP(8);
+            __m256 r = _mm256_div_ps(one, x);
+            
+
+            // i != j 
+            for(ii = j+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+
+                for(k = 0; k < j; k++){
+                    //FLOP(2);
+                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                    __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    FLOP(8);
+                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    FLOP(8);
+                    x1 = _mm256_sub_ps(x1, temp0);
+                }
+                //FLOP(1);
+                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
+                FLOP(8);
+                __m256 tostore = _mm256_mul_ps(x1, r);
+                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+            }
+        }
+        for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
+            for(int k = 0; k < I*I; k ++){ //go through cov mat
+                gn_cov_temp[i*I*I + j*I*I + k] = gn_X_temp[i*I*I + k*8 + j];
+            }
+        }
+    }
+
+    //BACK SUBSTITUTION
+    //vectorized backsubstitution
+    for(int i = 0; i < dim0; i++){
+        for(int d = 0; d < I; d++){
+            gn_cov_temp[i*I*I + d*I + d] = 1.0f / gn_cov_temp[i*I*I + d*I + d];
+            FLOP(1);
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    gn_X_temp[i*num_groups*D*I + j*I + l*8 + k] = x_norm[i*num_groups*D*I + j*I + k*I + l];
+                }
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 32){
+            float *mat = gn_cov_temp + (i*I*I);
+            float *vec0 = gn_X_temp + (i*num_groups*D*I + j*I); //8xI vector
+            float *vec1 = gn_X_temp + (i*num_groups*D*I + (j+8)*I); //8xI vector
+            float *vec2 = gn_X_temp + (i*num_groups*D*I + (j+16)*I); //8xI vector
+            float *vec3 = gn_X_temp + (i*num_groups*D*I + (j+24)*I); //8xI vector
+            for(int r = I-1; r >= 0; r--){//from last row to first
+                //float rowsum = 0.0f;
+                __m256 rowsum0 = _mm256_setzero_ps();
+                __m256 rowsum1 = _mm256_setzero_ps();
+                __m256 rowsum2 = _mm256_setzero_ps();
+                __m256 rowsum3 = _mm256_setzero_ps();
+                for(int c = I-1; c > r; c--){//do the partioal vec row mult
+                    __m256 vec_elem0 = _mm256_loadu_ps(&vec0[c*8]);
+                    __m256 vec_elem1 = _mm256_loadu_ps(&vec1[c*8]);
+                    __m256 vec_elem2 = _mm256_loadu_ps(&vec2[c*8]);
+                    __m256 vec_elem3 = _mm256_loadu_ps(&vec3[c*8]);
+                    __m256 mat_elem = _mm256_broadcast_ss(&mat[c*I + r]);
+                    FLOP(16);
+                    rowsum0 = _mm256_fmadd_ps(mat_elem, vec_elem0, rowsum0);
+                    FLOP(16);
+                    rowsum1 = _mm256_fmadd_ps(mat_elem, vec_elem1, rowsum1);
+                    FLOP(16);
+                    rowsum2 = _mm256_fmadd_ps(mat_elem, vec_elem2, rowsum2);
+                    FLOP(16);
+                    rowsum3 = _mm256_fmadd_ps(mat_elem, vec_elem3, rowsum3);
+                }
+                __m256 vec_elem0 = _mm256_loadu_ps(&vec0[r*8]);
+                __m256 vec_elem1 = _mm256_loadu_ps(&vec1[r*8]);
+                __m256 vec_elem2 = _mm256_loadu_ps(&vec2[r*8]);
+                __m256 vec_elem3 = _mm256_loadu_ps(&vec3[r*8]);
+                FLOP(8);
+                rowsum0 = _mm256_sub_ps(vec_elem0, rowsum0);
+                FLOP(8);
+                rowsum1 = _mm256_sub_ps(vec_elem1, rowsum1);
+                FLOP(8);
+                rowsum2 = _mm256_sub_ps(vec_elem2, rowsum2);
+                FLOP(8);
+                rowsum3 = _mm256_sub_ps(vec_elem3, rowsum3);
+                __m256 mat_elem = _mm256_broadcast_ss(&mat[r*I + r]);
+                FLOP(8);
+                __m256 res0 = _mm256_mul_ps(rowsum0, mat_elem);
+                FLOP(8);
+                __m256 res1 = _mm256_mul_ps(rowsum1, mat_elem);
+                FLOP(8);
+                __m256 res2 = _mm256_mul_ps(rowsum2, mat_elem);
+                FLOP(8);
+                __m256 res3 = _mm256_mul_ps(rowsum3, mat_elem);
+                _mm256_storeu_ps(&vec0[r*8], res0);
+                _mm256_storeu_ps(&vec1[r*8], res1);
+                _mm256_storeu_ps(&vec2[r*8], res2);
+                _mm256_storeu_ps(&vec3[r*8], res3);
+            }
+        }
+        for(int j = 0; j < num_groups*D; j += 8){
+            for (int k = 0; k < 8; k++){
+                for(int l = 0; l < I; l++){
+                    x_norm[i*num_groups*D*I + j*I + k*I + l] = gn_X_temp[i*num_groups*D*I + j*I + l*8 + k];
+                }
+            }
+        }
+    }
+    
+
+    //SCALING
+    if ( scaling ){
+
+        //just a transpose
+        for(int i = 0; i < I; i++){
+            for(int ii = 0; ii < I; ii++){
+                for(int j = 0; j < group_size; j++){
+                        gn_weight_temp[j*I*I + i*I + ii] = weight_orig[i*I*group_size + ii*group_size + j];
+                }
+            }
+        }
+
+        for(int i = 0; i < I; i++){
+            for(int j = 0; j < group_size; j++){
+                for(int l = 0; l < B; l++){
+                    gn_bias_temp[i*group_size*B + j*B + l] = bias_orig[i*group_size + ((j*B + l)%group_size)];
+                }
+            }
+        }
+        
+
+        //mat mult and add
+        for(int i = 0; i < dim0; i++){
+            for(int j = 0; j < num_groups; j++){
+                for(int l = 0; l < D; l++){
+                    //xn = Wx + b
+                    float *W = gn_weight_temp + (i%group_size)*I*I;
+                    float *xv = x_norm + i*num_groups*D*I + j*D*I + l*I;
+                    float *b = gn_bias_temp + i*I;
+
+                    float row0 = b[0];
+                    float row1 = b[1];
+
+                    FLOP(4);
+                    row0 = fmaf(W[0], xv[0], row0);
+                    row1 = fmaf(W[2], xv[0], row1);
+
+                    FLOP(4);
+                    row0 = fmaf(W[1], xv[1], row0);
+                    row1 = fmaf(W[3], xv[1], row1);
+
+                    xv[0] = row0;
+                    xv[1] = row1;
+                }
+            }
+        }
+    }
+
+    return;
+}
+
+
+
 static void optimized_groupnorm_all_dim(
     const float *x,
     int           B,
@@ -9146,7 +10353,7 @@ static void optimized_groupnorm_all_dim(
 
     switch (I){
         case 8:
-            optimized_groupnorm_v20(
+            optimized_groupnorm_v23(
                                         x,
                                         B,
                                         C,
@@ -9166,7 +10373,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 4:
-            optimized_groupnorm_v21(
+            optimized_groupnorm_v24(
                                         x,
                                         B,
                                         C,
@@ -9186,7 +10393,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 2:
-            optimized_groupnorm_v22(
+            optimized_groupnorm_v25(
                                         x,
                                         B,
                                         C,
@@ -9217,17 +10424,16 @@ static void optimized_groupnorm_all_dim(
 /*
     - The baseline versions were developed in /csrc/clifford_groupnorm.c. For the optimization we moved
       to this file and started to use global variables for the _temp arrays
-    - Starting with the python version the variable num_groups was adapted. But for the way the the varaible
+    - Starting with the python version the variable num_groups was adapted. But from the way the varaible
       is used, it seems that this variable refers to the size of a group. An example that would suggest this is
       that when we sum the mean we sum over num_groups*D multivectors, but rather one would expect to sum over
-      "size of one group"*D when calculating the mean within one group. Wheter the naming as it is now is right
-      or wrong is not clear. This is mentioned here to aid understanding.
-    - Versions v1 - v12, v16 - v20 are 3D only
-    - Versions v14 and v21 are 2D only
-    - Versions v15 and v22 are 1D only
+      "size of one group"*D when calculating the mean within one group. Whether the naming as it is now is "right"
+      or "wrong" is not clear. This is mentioned here to aid understanding.
+    - Versions v1 - v12, v16 - v20 and v23 are 3D only
+    - Versions v14, v21 and v24 are 2D only
+    - Versions v15, v22 and v25 are 1D only
     - Versions baseline, v0, v13 and all_dim work on 1D, 2D and 3D
-    - Versions v20 (3D), v21 (2D) and v22 (1D) are the most optimzed versions for each dimension
-      and have the 6 steps from the report indicated in CAPS
+    - Versions v23 (3D), v24 (2D) and v25 (1D) are the most optimzed versions for each dimension
 */
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -9262,5 +10468,11 @@ void register_groupnorm_functions(void) {
     
     //add_groupnorm_function(optimized_groupnorm_v21, "optimized_groupnorm_v21"); //2D version, scaling optimization (base v14) (scaling base v20)
     //add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //1D version, scaling optimization (base v15) (scaling base v21)
+
+    add_groupnorm_function(optimized_groupnorm_v23, "optimized_groupnorm_v23"); //fuse permutes into step main loops to improve cache locality (base v20)
+
+    //add_groupnorm_function(optimized_groupnorm_v24, "optimized_groupnorm_v24"); //2D version, fuse permutes (base v21) (decomp, backsub base v23)
+    //add_groupnorm_function(optimized_groupnorm_v25, "optimized_groupnorm_v25"); //1D version, fuse permutes (base v22) (decomp, backsub base v23)
+
     add_groupnorm_function(optimized_groupnorm_all_dim, "optimized_groupnorm_all_dim"); //switch to best version of each dimention
 }
