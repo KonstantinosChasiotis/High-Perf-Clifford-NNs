@@ -223,8 +223,7 @@ void optimized_act_v2(
  * inner loops. This version targets single-core execution with
  * minimal control flow inside hot loops.
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 void optimized_act_v5(
     const float *x,
@@ -336,8 +335,7 @@ void optimized_act_v5(
  * k_idx/x_idx concept and v5’s valid_weight array.
  */
 
-#include <stdlib.h>
-#include <math.h>
+
 
 void optimized_act_v6(
     const float *x,
@@ -439,8 +437,7 @@ void optimized_act_v6(
  * and table size is halved to 512 entries, reducing memory footprint and
  * potentially improving speed while still maintaining ~1e-5 accuracy.
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 // ------------------------------------------------------------
 // Sigmoid lookup table parameters and storage (half-size, tighter range)
@@ -569,8 +566,7 @@ void optimized_act_v7(
  * and heap-allocated temporary buffers for dynamic sizes.
  * Eliminates VLAs to ensure compatibility when C, I_full are not constants.
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 // ------------------------------------------------------------
 // Sigmoid LUT parameters and storage (half-size, tighter range)
@@ -740,8 +736,7 @@ void optimized_act_v8(
  * tiled for cache locality, and hoisted/reused buffers to eliminate per-tile allocation.
  * Eliminates VLAs to ensure compatibility when C, I_full are not constants.
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 // ------------------------------------------------------------
 // SIGMOID lookup parameters and storage (half-size, tighter range)
@@ -912,8 +907,7 @@ void optimized_act_v9(
  * and hoisted/reused buffers to eliminate per-tile allocation
  * Eliminates VLAs to ensure compatibility when C and space are not compile-time constants
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 // ------------------------------------------------------------
 // SIGMOID lookup parameters and storage (half-size, tighter range)
@@ -1078,8 +1072,6 @@ void optimized_act_v10(
  * hoisted sparse-list building per channel, tiled for cache locality,
  * reused buffers, and branchless gate application.
  */
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v11[SIGMOID_LUT_SIZE];
@@ -1213,8 +1205,7 @@ void optimized_act_v11(
  * tiled for cache locality, hoisted/reused buffers,
  * per-tile sparse-list building, and branchless gate application.
  */
-#include <stdlib.h>
-#include <math.h>
+
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v12[SIGMOID_LUT_SIZE];
@@ -1342,9 +1333,6 @@ void optimized_act_v12(
 }
 
 
-#include <immintrin.h>
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v13[SIGMOID_LUT_SIZE];
@@ -1512,11 +1500,6 @@ void optimized_act_v13(
 
 
 
-
-
-#include <immintrin.h>
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v14[SIGMOID_LUT_SIZE];
@@ -1696,9 +1679,6 @@ void optimized_act_v14(
 
 
 
-#include <immintrin.h>
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v15[SIGMOID_LUT_SIZE];
@@ -1882,9 +1862,6 @@ void optimized_act_v15(
 
 
 
-#include <immintrin.h>
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v16[SIGMOID_LUT_SIZE];
@@ -2064,10 +2041,6 @@ void optimized_act_v16(
 }
 
 
-
-#include <immintrin.h>
-#include <stdlib.h>
-#include <math.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v17[SIGMOID_LUT_SIZE];
