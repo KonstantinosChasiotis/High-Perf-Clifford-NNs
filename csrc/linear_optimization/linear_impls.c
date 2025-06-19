@@ -972,10 +972,10 @@ void register_linear_functions() {
     add_linear_function(optimized_linear_simple, "optimized_simple");
     add_linear_function(optimized_linear_v2, "optimized_v2_k_accum");
     add_linear_function(optimized_linear_v3, "optimized_v3_fma_k_accum");
-    add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
+    //add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
     
-    // add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak");
-    add_linear_function(optimized_linear_v6_avx, "optimized_v6_avx");
+    //add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak");
+    //add_linear_function(optimized_linear_v6_avx, "optimized_v6_avx");
     add_linear_function(optimized_linear_v7_avx_k_accum, "optimized_v7_avx_k_accum");
     add_linear_function(optimized_linear_v8_avx_more_unroll, "optimized_v8_avx_more_unroll");
     add_linear_function(optimized_linear_v9_scalar_no_xf, "optimized_v9_scalar_no_xf");

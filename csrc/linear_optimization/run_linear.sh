@@ -3,7 +3,7 @@ set -e
 
 echo "Compiling…"
 gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function \
-    -DPMU -DTRACEFLOPS \
+     -DTRACEFLOPS \
     main.c \
     linear_bench.c \
     linear_impls.c \
