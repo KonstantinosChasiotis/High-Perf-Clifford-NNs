@@ -1333,6 +1333,9 @@ void optimized_act_v12(
 }
 
 
+#include <stdlib.h>
+#include <math.h>
+#include <immintrin.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v13[SIGMOID_LUT_SIZE];
@@ -1343,35 +1346,38 @@ static void init_sigmoid_lut_v13(void) {
     const float x_min = -6.0f, x_max = 6.0f;
     for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
         float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
-        FLOP(4); // sub, mul, div, add for x sampling
+        FLOP(4);  // sub, mul, div, add for x sampling
         sigmoid_lut_v13[i] = 1.0f / (1.0f + expf(-x));
-        FLOP(4); // expf, negate, add, div for LUT sigmoid
+        FLOP(4);  // expf, negate, add, div for LUT init
     }
     lut_v13_initialized = 1;
 }
 
-// fast_sigmoid_v13: LUT lookup + linear interpolation
+// fast_sigmoid_v13: LUT lookup + linear interpolation with full FLOP count
 static inline float fast_sigmoid_v13(float z) {
     if (!lut_v13_initialized) init_sigmoid_lut_v13();
+
     const float x_min = -6.0f, x_max = 6.0f;
+    FLOP(1);                    // compare z <= x_min
     if (z <= x_min) return 0.0f;
+    FLOP(1);                    // compare z >= x_max
     if (z >= x_max) return 1.0f;
+
     float f    = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
-    FLOP(3); // sub, mul, div for index mapping
+    FLOP(3);                    // sub, mul, div for index mapping
+
     int   idx  = (int)f;
     float frac = f - idx;
-    FLOP(1); // sub for fractional part
+    FLOP(1);                    // sub for fractional part
+
     float y0   = sigmoid_lut_v13[idx];
-    float y1   = sigmoid_lut_v13[idx+1];
+    float y1   = sigmoid_lut_v13[idx + 1];
     float res  = y0 + frac * (y1 - y0);
-    FLOP(3); // sub, mul, add for interpolation
+    FLOP(3);                    // sub, mul, add for interpolation
+
     return res;
 }
 
-// ------------------------------------------------------------
-// optimized_act_v13
-// v13: AVX2‐vectorized dot‐product and write‐back with FLOP counting
-// ------------------------------------------------------------
 void optimized_act_v13(
     const float *x,
     int           B,
@@ -1393,15 +1399,15 @@ void optimized_act_v13(
     const float g_eps = 1e-6f;
     size_t      stride = (size_t)C * slots;
 
-    // Allocate and prebuild sparse lists once per channel
+    // Allocate sparse-helper arrays
     int   *inv        = malloc(space * sizeof *inv);
     int   *valid_idx  = malloc((size_t)C * K * sizeof *valid_idx);
     float *valid_wght = malloc((size_t)C * K * sizeof *valid_wght);
     int   *valid_cnt  = malloc((size_t)C       * sizeof *valid_cnt);
     if (!inv || !valid_idx || !valid_wght || !valid_cnt) return;
 
+    // Build sparse lists per channel
     for (int c = 0; c < C; ++c) {
-        // build inverse map
         for (int i = 0; i < space; ++i) inv[i] = -1;
         for (int i = 0; i < slots; ++i) {
             int b = input_blades[i];
@@ -1437,7 +1443,7 @@ void optimized_act_v13(
                     const float *x_bc = x   + (size_t)b * stride + (size_t)c * slots;
                     float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
 
-                    // 1) Vectorized dot-product without bias
+                    // 1) Vectorized AVX2 dot-product
                     __m256 accv = _mm256_setzero_ps();
                     int j = 0;
                     for (; j + 7 < vc; j += 8) {
@@ -1445,47 +1451,54 @@ void optimized_act_v13(
                         __m256  wv = _mm256_loadu_ps(wts + j);
                         __m256  xv = _mm256_i32gather_ps(x_bc, iv, 4);
                         accv = _mm256_fmadd_ps(wv, xv, accv);
-                        FLOP(16); // 8 mul + 8 add
+                        FLOP(16);  // 8 mul + 8 add
                     }
-                    // horizontal sum
+
+                    // horizontal sum of accv
                     float buf[8];
                     _mm256_storeu_ps(buf, accv);
                     float acc = 0.0f;
                     int lanes = vc < 8 ? vc : 8;
                     for (int k = 0; k < lanes; ++k) {
                         acc += buf[k];
-                        FLOP(1); // add
+                        FLOP(1);  // add
                     }
-                    // 2) tail scalar
+
+                    // 2) scalar tail
                     for (; j < vc; ++j) {
                         acc = fmaf(wts[j], x_bc[idxs[j]], acc);
-                        FLOP(2); // mul + add
+                        FLOP(2);  // mul + add
                     }
+
                     // 3) add bias
                     acc += bval;
-                    FLOP(1);
+                    FLOP(1);     // add
 
-                    // 4) LUT sigmoid + branchless mask
+                    // 4) LUT sigmoid + mask/scale
                     float g = fast_sigmoid_v13(acc);
-                    FLOP(4); // sigmoid cost
+                    FLOP(7);    // 3 map + 1 frac + 3 interp inside LUT
+                    FLOP(2);    // two compares for m_low, m_high
+
                     float m_low  = (g > g_eps);
                     float m_high = (g > 1.0f - g_eps);
                     float scale  = m_low * (m_high + (1.0f - m_high) * g);
-                    FLOP(3); // compare + mul + add
+                    FLOP(4);    // sub, mul, add, mul for mask/scale
 
-                    // 5) vectorized write-back
+                    // 5) broadcast scale for vector write-back
                     __m256 vs = _mm256_set1_ps(scale);
-                    FLOP(1); // broadcast
+                    FLOP(1);    // broadcast
+
+                    // 6) vectorized write-back
                     int i = 0;
                     for (; i + 7 < slots; i += 8) {
                         __m256 xv = _mm256_loadu_ps(x_bc + i);
                         __m256 yv = _mm256_mul_ps(xv, vs);
                         _mm256_storeu_ps(o_bc + i, yv);
-                        FLOP(8); // 8 mul
+                        FLOP(8);  // 8 mul
                     }
                     for (; i < slots; ++i) {
                         o_bc[i] = x_bc[i] * scale;
-                        FLOP(1);
+                        FLOP(1);  // mul
                     }
                 }
             }
@@ -1497,6 +1510,7 @@ void optimized_act_v13(
     free(valid_wght);
     free(valid_cnt);
 }
+
 
 
 
@@ -1678,7 +1692,9 @@ void optimized_act_v14(
 }
 
 
-
+#include <stdlib.h>
+#include <math.h>
+#include <immintrin.h>
 
 #define SIGMOID_LUT_SIZE 512
 static float sigmoid_lut_v15[SIGMOID_LUT_SIZE];
@@ -1689,28 +1705,35 @@ static void init_sigmoid_lut_v15(void) {
     const float x_min = -6.0f, x_max = 6.0f;
     for (int i = 0; i < SIGMOID_LUT_SIZE; ++i) {
         float x = x_min + (x_max - x_min) * i / (SIGMOID_LUT_SIZE - 1);
-        FLOP(4); // sub, mul, div, add for x sampling
+        FLOP(4);  // sub, mul, div, add for x sampling
         sigmoid_lut_v15[i] = 1.0f / (1.0f + expf(-x));
-        FLOP(4); // expf, negate, add, div for LUT sigmoid
+        FLOP(4);  // expf, negate, add, div (init only)
     }
     lut_v15_initialized = 1;
 }
 
-// Inline LUT-based sigmoid with FLOP counting
+// Inline LUT-based sigmoid with *all* FLOP counting
 static inline float fast_sigmoid_v15(float z) {
     if (!lut_v15_initialized) init_sigmoid_lut_v15();
+
     const float x_min = -6.0f, x_max = 6.0f;
+    FLOP(1);                    // compare
     if (z <= x_min) return 0.0f;
+    FLOP(1);                    // compare
     if (z >= x_max) return 1.0f;
+
     float f    = (z - x_min) * (SIGMOID_LUT_SIZE - 1) / (x_max - x_min);
-    FLOP(3); // sub, mul, div for index mapping
+    FLOP(3);                    // sub, mul, div for index mapping
+
     int   idx  = (int)f;
     float frac = f - idx;
-    FLOP(1); // sub for fractional part
+    FLOP(1);                    // sub for fractional part
+
     float y0   = sigmoid_lut_v15[idx];
-    float y1   = sigmoid_lut_v15[idx+1];
+    float y1   = sigmoid_lut_v15[idx + 1];
     float res  = y0 + frac * (y1 - y0);
-    FLOP(3); // sub, mul, add for interpolation
+    FLOP(3);                    // sub, mul, add for interpolation
+
     return res;
 }
 
@@ -1735,13 +1758,14 @@ void optimized_act_v15(
     const float g_eps = 1e-6f;
     size_t      stride = (size_t)C * slots;
 
+    // allocate sparse-helper arrays
     int   *inv        = malloc(space * sizeof *inv);
     int   *valid_idx  = malloc((size_t)C * K   * sizeof *valid_idx);
     float *valid_wght = malloc((size_t)C * K   * sizeof *valid_wght);
     int   *valid_cnt  = malloc((size_t)C         * sizeof *valid_cnt);
     if (!inv || !valid_idx || !valid_wght || !valid_cnt) return;
 
-    // Precompute sparse lists per channel
+    // build sparse lists per channel (no FLOPs counted here)
     for (int c = 0; c < C; ++c) {
         for (int i = 0; i < space; ++i) inv[i] = -1;
         for (int i = 0; i < slots; ++i) {
@@ -1763,10 +1787,10 @@ void optimized_act_v15(
         valid_cnt[c] = vc;
     }
 
-    // Tiled over batches and channels
-    for (int b0 = 0; b0 < B; b0 += tb) {
+    // main tiled loop
+    for (int b0 = 0; b0 < B;        b0 += tb) {
         int b1 = b0 + tb < B ? b0 + tb : B;
-        for (int c0 = 0; c0 < C; c0 += tc) {
+        for (int c0 = 0; c0 < C;      c0 += tc) {
             int c1 = c0 + tc < C ? c0 + tc : C;
             for (int c = c0; c < c1; ++c) {
                 int    vc   = valid_cnt[c];
@@ -1778,7 +1802,7 @@ void optimized_act_v15(
                     const float *x_bc = x   + (size_t)b * stride + (size_t)c * slots;
                     float       *o_bc = out + (size_t)b * stride + (size_t)c * slots;
 
-                    // Deeper-unrolled AVX dot-product with 4 accumulators
+                    // AVX‐unrolled dot
                     __m256 acc0 = _mm256_setzero_ps();
                     __m256 acc1 = _mm256_setzero_ps();
                     __m256 acc2 = _mm256_setzero_ps();
@@ -1789,12 +1813,10 @@ void optimized_act_v15(
                         __m256i iv1 = _mm256_loadu_si256((__m256i*)(idxs + j +  8));
                         __m256i iv2 = _mm256_loadu_si256((__m256i*)(idxs + j + 16));
                         __m256i iv3 = _mm256_loadu_si256((__m256i*)(idxs + j + 24));
-
                         __m256 wv0 = _mm256_loadu_ps(wts + j    );
                         __m256 wv1 = _mm256_loadu_ps(wts + j +  8);
                         __m256 wv2 = _mm256_loadu_ps(wts + j + 16);
                         __m256 wv3 = _mm256_loadu_ps(wts + j + 24);
-
                         __m256 xv0 = _mm256_i32gather_ps(x_bc, iv0, 4);
                         __m256 xv1 = _mm256_i32gather_ps(x_bc, iv1, 4);
                         __m256 xv2 = _mm256_i32gather_ps(x_bc, iv2, 4);
@@ -1804,44 +1826,46 @@ void optimized_act_v15(
                         acc1 = _mm256_fmadd_ps(wv1, xv1, acc1);
                         acc2 = _mm256_fmadd_ps(wv2, xv2, acc2);
                         acc3 = _mm256_fmadd_ps(wv3, xv3, acc3);
-                        FLOP(64); // 4 * (8 mul + 8 add)
+                        FLOP(64);  // 4 × (8 mul + 8 add)
                     }
+
+                    // sum the 4 accumulators
                     __m256 sum01 = _mm256_add_ps(acc0, acc1);
                     __m256 sum23 = _mm256_add_ps(acc2, acc3);
                     __m256 accv  = _mm256_add_ps(sum01, sum23);
-                    FLOP(16); // 2 * vector add
+                    FLOP(24);     // 3 adds × 8 lanes
 
-                    // horizontal sum
-                    float buf[8]; _mm256_storeu_ps(buf, accv);
+                    // horizontal reduce
+                    float buf[8];
+                    _mm256_storeu_ps(buf, accv);
                     float acc = buf[0]+buf[1]+buf[2]+buf[3]
-                              +buf[4]+buf[5]+buf[6]+buf[7];
-                    FLOP(7); // 7 adds
+                              + buf[4]+buf[5]+buf[6]+buf[7];
+                    FLOP(7);      // 7 scalar adds
 
                     // scalar tail
                     for (; j < vc; ++j) {
                         acc = fmaf(wts[j], x_bc[idxs[j]], acc);
-                        FLOP(2);
+                        FLOP(2);  // mul + add
                     }
 
                     // add bias
                     acc += bval;
                     FLOP(1);
 
-                    // sigmoid + mask
+                    // sigmoid + mask/scale
                     float g      = fast_sigmoid_v15(acc);
-                    FLOP(4); // LUT sigmoid cost
+                    FLOP(7);     // 3 map + 1 frac + 3 interp
+                    FLOP(2);     // g>g_eps and g>(1-g_eps) comparisons
                     float m_low  = (g > g_eps);
                     float m_high = (g > 1.0f - g_eps);
                     float scale  = m_low * (m_high + (1.0f - m_high) * g);
-                    FLOP(3);
-                    __m256 sv = _mm256_set1_ps(scale);
-                    FLOP(1);
+                    FLOP(4);     // sub, mul, add, mul
 
-                    // vectorized write-back
+                    // write-back
                     int i = 0;
                     for (; i + 7 < slots; i += 8) {
                         __m256 xv = _mm256_loadu_ps(x_bc + i);
-                        __m256 yv = _mm256_mul_ps(xv, sv);
+                        __m256 yv = _mm256_mul_ps(xv, _mm256_set1_ps(scale));
                         _mm256_storeu_ps(o_bc + i, yv);
                         FLOP(8);
                     }
@@ -1859,8 +1883,6 @@ void optimized_act_v15(
     free(valid_wght);
     free(valid_cnt);
 }
-
-
 
 
 #define SIGMOID_LUT_SIZE 512
@@ -2241,9 +2263,9 @@ void register_activation_functions(void) {
     //add_activation_function(optimized_act_v12,  "optimized_act_v12");
     add_activation_function(optimized_act_v13,  "AVX Implementation");
     //add_activation_function(optimized_act_v14,  "v14");
-    add_activation_function(optimized_act_v15,  "v15");
-    add_activation_function(optimized_act_v16,  "v16: AVX + 4 acc");
-    add_activation_function(optimized_act_v17,  "v17: AVX + 16 acc");
+    //add_activation_function(optimized_act_v15,  "v15");
+    //add_activation_function(optimized_act_v16,  "v16: AVX + 4 acc");
+    //add_activation_function(optimized_act_v17,  "v17: AVX + 16 acc");
     //add_activation_function(optimized_act_v18,  "optimized_act_v18");
     //add_activation_function(optimized_act_v19,  "optimized_act_v19");
 }
