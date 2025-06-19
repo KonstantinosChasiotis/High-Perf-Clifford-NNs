@@ -160,7 +160,7 @@ Plotting scripts expect:
 
 
 ## 📝 To-Dos
-### Weeks 06.05 - 20.05
+### WEEKS 06.05 - 20.05
 - [ ] Write a bash script to just run all the performance + roofline plots
 - [x] (SIGMOID) Analyize performance dip with increasing batch size
 - [x] (LINEAR) Implement the direct kernels for 3D (via e.g. indexing/lookup)
