@@ -29,7 +29,7 @@ void optimized_no_kernel_v0(
         for (int c_out = 0; c_out < C_out; ++c_out) {
             float b0_out = 0.0f;
             float b1_out = 0.0f;
-            if (L->bias) {
+        if (L->bias) {
                 b0_out = L->bias[c_out * I + 0];
                 b1_out = L->bias[c_out * I + 1];
             }
@@ -81,13 +81,13 @@ void optimized_linear_basic(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    // tell the compiler it's aligned (malloc is ≥16B on most platforms)
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        // tell the compiler it's aligned (malloc is ≥16B on most platforms)
+        K = (float *)__builtin_assume_aligned(K, 64);
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -311,7 +311,7 @@ void optimized_linear_1d_kernel_reordered_weights(
     size_t output_bytes = B * C_out * I * sizeof(float);
 
     BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
+                if (L->bias) {
         BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
     }
     BYTES_WRITTEN(output_bytes);
@@ -607,6 +607,114 @@ void optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma(
     free(weights_reorg);
 }
 
+void optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma(
+    const CliffordLinear * __restrict L,
+    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
+    int                    B,
+    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
+{
+    const int I      = L->sig.n_blades;
+    const int C_in   = L->in_channels;
+    const int C_out  = L->out_channels;
+
+    if (I != 2) {
+        // printf("This implementation is only valid for #blades = 2\n");
+        return;
+    }
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
+    const float g0 = L->sig.g[0];
+
+    // Lookup tables for 1D Clifford algebra
+    int weights_view[2][2] = {
+        {0, 1},  // For output blade 0: use w0 for input blade 0, w1 for input blade 1
+        {1, 0}   // For output blade 1: use w1 for input blade 0, w0 for input blade 1
+    };
+
+    float g_view[2][2] = {
+        {1.0f, g0},   // For output blade 0: multiply by 1 for input blade 0, g0 for input blade 1
+        {1.0f, 1.0f}  // For output blade 1: multiply by 1 for both input blades
+    };
+
+    // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
+    float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
+                    L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
+            }
+        }
+    }
+
+    // Initialize output to zero
+    for (int i = 0; i < B * C_out * I; ++i) {
+        out[i] = 0.0f;
+    }
+
+    // Main computation loops
+    for (int batch = 0; batch < B; ++batch) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int out_blade = 0; out_blade < I; ++out_blade) {
+                
+                // Accumulator per input blade - accumulate weight*input without g_coeff
+                float blade_accumulator[I]; // For I=2, this is just 2 floats
+                for (int i = 0; i < I; ++i) {
+                    blade_accumulator[i] = 0.0f;
+                }
+
+                // Accumulate across all input channels (without g_coeff)
+                for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                    const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
+                    const float *input_slice = x + batch * (C_in * I) + in_ch * I;
+                    
+                    // Hottest loop - no g_coeff lookup here! - OPTIMIZED WITH FMAF
+                    for (int in_blade = 0; in_blade < I; ++in_blade) {
+                        int weight_idx = weights_view[out_blade][in_blade];
+                        float weight = weight_slice[weight_idx];
+                        float input_val = input_slice[in_blade];
+                        
+                        // Use fmaf for fused multiply-add operation
+                        blade_accumulator[in_blade] = fmaf(weight, input_val, blade_accumulator[in_blade]);
+                        FLOP(2); // FMA counts as 2 operations (1 multiply + 1 add)
+                    }
+                }
+
+                // Now apply g_coeff and reduce to final result - OPTIMIZED WITH FMAF
+                float final_accumulator = 0.0f;
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    float g_coeff = g_view[out_blade][in_blade];
+                    // Use fmaf for fused multiply-add operation
+                    final_accumulator = fmaf(blade_accumulator[in_blade], g_coeff, final_accumulator);
+                    FLOP(2); // FMA counts as 2 operations (1 multiply + 1 add)
+                }
+
+                // Add bias if present
+                if (L->bias) {
+                    final_accumulator += L->bias[out_blade * C_out + out_ch];
+                    FLOP(1);
+                }
+
+                // Store result
+                out[batch * (C_out * I) + out_ch * I + out_blade] = final_accumulator;
+            }
+        }
+    }
+    
+    // Clean up weights memory
+    free(weights_reorg);
+}
+
 void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma(
     const CliffordLinear * __restrict L,
     const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
@@ -670,9 +778,9 @@ void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma(
 
     // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
     float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
-    for (int out_ch = 0; out_ch < C_out; ++out_ch) {
-        for (int in_ch = 0; in_ch < C_in; ++in_ch) {
-            for (int blade = 0; blade < I; ++blade) {
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
                 weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
                     L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
             }
@@ -684,27 +792,22 @@ void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma(
         out[i] = 0.0f;
     }
 
+    float blade_accumulator[8] = {0}; // For I=8, this is 8 floats
+
     // Main computation loops
     for (int batch = 0; batch < B; ++batch) {
         for (int out_ch = 0; out_ch < C_out; ++out_ch) {
             for (int out_blade = 0; out_blade < I; ++out_blade) {
-                
-                // Accumulator per input blade - accumulate weight*input without g_coeff
-                float blade_accumulator[8]; // For I=8, this is 8 floats
-                for (int i = 0; i < I; ++i) {
-                    blade_accumulator[i] = 0.0f;
-                }
 
                 // Accumulate across all input channels (without g_coeff)
-                for (int in_ch = 0; in_ch < C_in; ++in_ch) {
-                    const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
-                    const float *input_slice = x + batch * (C_in * I) + in_ch * I;
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    // Likely heavily-strided weight matrix cache accesses
+                    int weight_idx = weights_view[out_blade][in_blade];
                     
-                    // Hottest loop - no g_coeff lookup here! - OPTIMIZED WITH FMAF
-                    for (int in_blade = 0; in_blade < I; ++in_blade) {
-                        int weight_idx = weights_view[out_blade][in_blade];
+                    for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                        const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
                         float weight = weight_slice[weight_idx];
-                        float input_val = input_slice[in_blade];
+                        float input_val = x[batch * (C_in * I) + in_ch * I + in_blade];
                         
                         // Use fmaf for fused multiply-add operation
                         blade_accumulator[in_blade] = fmaf(weight, input_val, blade_accumulator[in_blade]);
@@ -718,6 +821,7 @@ void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma(
                     float g_coeff = g_view[out_blade][in_blade];
                     // Use fmaf for fused multiply-add operation
                     final_accumulator = fmaf(blade_accumulator[in_blade], g_coeff, final_accumulator);
+                    blade_accumulator[in_blade] = 0.0f;
                     FLOP(2); // FMA counts as 2 operations (1 multiply + 1 add)
                 }
 
@@ -736,6 +840,681 @@ void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma(
     // Clean up weights memory
     free(weights_reorg);
 }
+
+// Likely bad striding of in_channel for each input leading to far more cycles than one-time input/output flattening striding.
+void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum(
+    const CliffordLinear * __restrict L,
+    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
+    int                    B,
+    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
+{
+    const int I      = L->sig.n_blades;
+    const int C_in   = L->in_channels;
+    const int C_out  = L->out_channels;
+
+    if (I != 8) {
+        // printf("This implementation is only valid for #blades = 8 (3D Clifford)\n");
+        return;
+    }
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
+    const float g0 = L->sig.g[0];
+    const float g1 = L->sig.g[1];
+    const float g2 = L->sig.g[2];
+
+    // Lookup tables for 3D Clifford algebra (8x8 matrices)
+    // Permutation matrix P - which weight index to use
+
+    // Given the matrix is symmetric, we can load in the weight once and multiply by the weights_view inverse? Some form of unrolling?
+    int weights_view[8][8] = {
+        {0, 1, 2, 3, 4, 5, 6, 7},  // output blade 0
+        {1, 0, 4, 5, 2, 3, 7, 6},  // output blade 1
+        {2, 4, 0, 6, 1, 7, 3, 5},  // output blade 2
+        {3, 5, 6, 0, 7, 1, 2, 4},  // output blade 3
+        {4, 2, 1, 7, 0, 6, 5, 3},  // output blade 4
+        {5, 3, 7, 1, 6, 0, 4, 2},  // output blade 5
+        {6, 7, 3, 2, 5, 4, 0, 1},  // output blade 6
+        {7, 6, 5, 4, 3, 2, 1, 0}   // output blade 7
+    };
+
+    // Coefficient matrix C - scalar multipliers
+    // Pre-compute all g coefficient combinations
+    float g0g1 = g0 * g1;
+    float g0g2 = g0 * g2;
+    float g1g2 = g1 * g2;
+    float g0g1g2 = g0 * g1 * g2;
+
+    float g_view[8][8] = {
+        {1.0f, g0, g1, g2, -g0g1, -g0g2, -g1g2, -g0g1g2},  // output blade 0
+        {1.0f, 1.0f, -g1, -g2, g1, g2, -g1g2, -g1g2},      // output blade 1
+        {1.0f, g0, 1.0f, -g2, -g0, g0g2, g2, g0g2},        // output blade 2
+        {1.0f, g0, g1, 1.0f, -g0g1, -g0, -g1, -g0g1},      // output blade 3
+        {1.0f, 1.0f, -1.0f, g2, 1.0f, -g2, g2, g2},        // output blade 4
+        {1.0f, 1.0f, -g1, -1.0f, g1, 1.0f, -g1, -g1},      // output blade 5
+        {1.0f, g0, 1.0f, -1.0f, -g0, g0, 1.0f, g0},        // output blade 6
+        {1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f} // output blade 7
+    };
+
+    // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
+    float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
+                    L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
+            }
+        }
+    }
+
+    // Initialize output to zero
+    for (int i = 0; i < B * C_out * I; ++i) {
+        out[i] = 0.0f;
+    }
+
+    // float blade_accumulator[8] = {0}; // For I=8, this is 8 floats
+
+    // Main computation loops
+    for (int batch = 0; batch < B; ++batch) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int out_blade = 0; out_blade < I; ++out_blade) {
+
+                float blade_acc0 = 0.0f, blade_acc1 = 0.0f, blade_acc2 = 0.0f, blade_acc3 = 0.0f;
+                float blade_acc4 = 0.0f, blade_acc5 = 0.0f, blade_acc6 = 0.0f, blade_acc7 = 0.0f;
+
+                // Accumulate across all input channels (without g_coeff)
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    // Likely heavily-strided weight matrix cache accesses
+                    int weight_idx = weights_view[out_blade][in_blade];
+                    
+                    for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                        const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
+                        float weight = weight_slice[weight_idx];
+                        float input_val = x[batch * (C_in * I) + in_ch * I + in_blade];
+                        
+                        // Use fmaf for fused multiply-add operation
+                        switch (in_blade) {
+                            case 0: blade_acc0 = fmaf(weight, input_val, blade_acc0); break;
+                            case 1: blade_acc1 = fmaf(weight, input_val, blade_acc1); break;
+                            case 2: blade_acc2 = fmaf(weight, input_val, blade_acc2); break;
+                            case 3: blade_acc3 = fmaf(weight, input_val, blade_acc3); break;
+                            case 4: blade_acc4 = fmaf(weight, input_val, blade_acc4); break;
+                            case 5: blade_acc5 = fmaf(weight, input_val, blade_acc5); break;
+                            case 6: blade_acc6 = fmaf(weight, input_val, blade_acc6); break;
+                            case 7: blade_acc7 = fmaf(weight, input_val, blade_acc7); break;
+                        }
+                        FLOP(2); // FMA counts as 2 operations (1 multiply + 1 add)
+                    }
+                }
+
+                // Now apply g_coeff and reduce to final result - OPTIMIZED WITH FMAF
+                float final_accumulator_1 = 0.0f;
+                float final_accumulator_2 = 0.0f;
+                float final_accumulator_3 = 0.0f;
+                float final_accumulator_4 = 0.0f;
+                final_accumulator_1 = fmaf(blade_acc0, g_view[out_blade][0], final_accumulator_1);
+                final_accumulator_2 = fmaf(blade_acc1, g_view[out_blade][1], final_accumulator_2);
+                final_accumulator_3 = fmaf(blade_acc2, g_view[out_blade][2], final_accumulator_3);
+                final_accumulator_4 = fmaf(blade_acc3, g_view[out_blade][3], final_accumulator_4);
+                final_accumulator_1 = fmaf(blade_acc4, g_view[out_blade][4], final_accumulator_1);
+                final_accumulator_2 = fmaf(blade_acc5, g_view[out_blade][5], final_accumulator_2);
+                final_accumulator_3 = fmaf(blade_acc6, g_view[out_blade][6], final_accumulator_3);
+                final_accumulator_4 = fmaf(blade_acc7, g_view[out_blade][7], final_accumulator_4);
+
+                float final_accumulator = final_accumulator_1 + final_accumulator_2 + final_accumulator_3 + final_accumulator_4;
+                FLOP(16); // 8 FMAs, so 8 multiplies + 8 adds
+
+                // Add bias if present
+                if (L->bias) {
+                    final_accumulator += L->bias[out_blade * C_out + out_ch];
+                    FLOP(1);
+                }
+
+                // Store result
+                out[batch * (C_out * I) + out_ch * I + out_blade] = final_accumulator;
+            }
+        }
+    }
+    
+    // Clean up weights memory
+    free(weights_reorg);
+}
+
+// Likely bad striding of in_channel for each input leading to far more cycles than one-time input/output flattening striding.
+void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner(
+    const CliffordLinear * __restrict L,
+    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
+    int                    B,
+    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
+{
+    const int I      = L->sig.n_blades;
+    const int C_in   = L->in_channels;
+    const int C_out  = L->out_channels;
+
+    if (I != 8) {
+        // printf("This implementation is only valid for #blades = 8 (3D Clifford)\n");
+        return;
+    }
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
+    const float g0 = L->sig.g[0];
+    const float g1 = L->sig.g[1];
+    const float g2 = L->sig.g[2];
+
+    // Lookup tables for 3D Clifford algebra (8x8 matrices)
+    // Permutation matrix P - which weight index to use
+
+    // Given the matrix is symmetric, we can load in the weight once and multiply by the weights_view inverse? Some form of unrolling?
+    int weights_view[8][8] = {
+        {0, 1, 2, 3, 4, 5, 6, 7},  // output blade 0
+        {1, 0, 4, 5, 2, 3, 7, 6},  // output blade 1
+        {2, 4, 0, 6, 1, 7, 3, 5},  // output blade 2
+        {3, 5, 6, 0, 7, 1, 2, 4},  // output blade 3
+        {4, 2, 1, 7, 0, 6, 5, 3},  // output blade 4
+        {5, 3, 7, 1, 6, 0, 4, 2},  // output blade 5
+        {6, 7, 3, 2, 5, 4, 0, 1},  // output blade 6
+        {7, 6, 5, 4, 3, 2, 1, 0}   // output blade 7
+    };
+
+    // Coefficient matrix C - scalar multipliers
+    // Pre-compute all g coefficient combinations
+    float g0g1 = g0 * g1;
+    float g0g2 = g0 * g2;
+    float g1g2 = g1 * g2;
+    float g0g1g2 = g0 * g1 * g2;
+
+    float g_view[8][8] = {
+        {1.0f, g0, g1, g2, -g0g1, -g0g2, -g1g2, -g0g1g2},  // output blade 0
+        {1.0f, 1.0f, -g1, -g2, g1, g2, -g1g2, -g1g2},      // output blade 1
+        {1.0f, g0, 1.0f, -g2, -g0, g0g2, g2, g0g2},        // output blade 2
+        {1.0f, g0, g1, 1.0f, -g0g1, -g0, -g1, -g0g1},      // output blade 3
+        {1.0f, 1.0f, -1.0f, g2, 1.0f, -g2, g2, g2},        // output blade 4
+        {1.0f, 1.0f, -g1, -1.0f, g1, 1.0f, -g1, -g1},      // output blade 5
+        {1.0f, g0, 1.0f, -1.0f, -g0, g0, 1.0f, g0},        // output blade 6
+        {1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f} // output blade 7
+    };
+
+    // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
+    float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
+                    L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
+            }
+        }
+    }
+
+    // Initialize output to zero
+    for (int i = 0; i < B * C_out * I; ++i) {
+        out[i] = 0.0f;
+    }
+
+    // float blade_accumulator[8] = {0}; // For I=8, this is 8 floats
+
+    // Main computation loops
+    for (int batch = 0; batch < B; ++batch) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int out_blade = 0; out_blade < I; ++out_blade) {
+
+                float blade_acc0 = 0.0f, blade_acc1 = 0.0f, blade_acc2 = 0.0f, blade_acc3 = 0.0f;
+                float blade_acc4 = 0.0f, blade_acc5 = 0.0f, blade_acc6 = 0.0f, blade_acc7 = 0.0f;
+
+                // Accumulate across all input channels (without g_coeff)
+                for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                    
+                    const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
+                    
+                    for (int in_blade = 0; in_blade < I; ++in_blade) {
+                        // Likely heavily-strided weight matrix cache accesses
+                        int weight_idx = weights_view[out_blade][in_blade];
+                        float weight = weight_slice[weight_idx];
+                    
+                        float input_val = x[batch * (C_in * I) + in_ch * I + in_blade];
+                        
+                        // Use fmaf for fused multiply-add operation
+                        switch (in_blade) {
+                            case 0: blade_acc0 = fmaf(weight, input_val, blade_acc0); break;
+                            case 1: blade_acc1 = fmaf(weight, input_val, blade_acc1); break;
+                            case 2: blade_acc2 = fmaf(weight, input_val, blade_acc2); break;
+                            case 3: blade_acc3 = fmaf(weight, input_val, blade_acc3); break;
+                            case 4: blade_acc4 = fmaf(weight, input_val, blade_acc4); break;
+                            case 5: blade_acc5 = fmaf(weight, input_val, blade_acc5); break;
+                            case 6: blade_acc6 = fmaf(weight, input_val, blade_acc6); break;
+                            case 7: blade_acc7 = fmaf(weight, input_val, blade_acc7); break;
+                        }
+                        FLOP(2); // FMA counts as 2 operations (1 multiply + 1 add)
+                    }
+                }
+
+                // Now apply g_coeff and reduce to final result - OPTIMIZED WITH FMAF
+                float final_accumulator_1 = 0.0f;
+                float final_accumulator_2 = 0.0f;
+                float final_accumulator_3 = 0.0f;
+                float final_accumulator_4 = 0.0f;
+                final_accumulator_1 = fmaf(blade_acc0, g_view[out_blade][0], final_accumulator_1);
+                final_accumulator_2 = fmaf(blade_acc1, g_view[out_blade][1], final_accumulator_2);
+                final_accumulator_3 = fmaf(blade_acc2, g_view[out_blade][2], final_accumulator_3);
+                final_accumulator_4 = fmaf(blade_acc3, g_view[out_blade][3], final_accumulator_4);
+                final_accumulator_1 = fmaf(blade_acc4, g_view[out_blade][4], final_accumulator_1);
+                final_accumulator_2 = fmaf(blade_acc5, g_view[out_blade][5], final_accumulator_2);
+                final_accumulator_3 = fmaf(blade_acc6, g_view[out_blade][6], final_accumulator_3);
+                final_accumulator_4 = fmaf(blade_acc7, g_view[out_blade][7], final_accumulator_4);
+
+                float final_accumulator = final_accumulator_1 + final_accumulator_2 + final_accumulator_3 + final_accumulator_4;
+                FLOP(16); // 8 FMAs, so 8 multiplies + 8 adds
+
+                // Add bias if present
+                if (L->bias) {
+                    final_accumulator += L->bias[out_blade * C_out + out_ch];
+                    FLOP(1);
+                }
+
+                // Store result
+                out[batch * (C_out * I) + out_ch * I + out_blade] = final_accumulator;
+            }
+        }
+    }
+    
+    // Clean up weights memory
+    free(weights_reorg);
+}
+
+// Likely bad striding of in_channel for each input leading to far more cycles than one-time input/output flattening striding.
+void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse(
+    const CliffordLinear * __restrict L,
+    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
+    int                    B,
+    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
+{
+    const int I      = L->sig.n_blades;
+    const int C_in   = L->in_channels;
+    const int C_out  = L->out_channels;
+
+    if (I != 8) {
+        // printf("This implementation is only valid for #blades = 8 (3D Clifford)\n");
+        return;
+    }
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
+    const float g0 = L->sig.g[0];
+    const float g1 = L->sig.g[1];
+    const float g2 = L->sig.g[2];
+
+    // Lookup tables for 3D Clifford algebra (8x8 matrices)
+    // Permutation matrix P - which weight index to use
+
+    // Given the matrix is symmetric, we can load in the weight once and multiply by the weights_view inverse? Some form of unrolling?
+    int weights_view[8][8] = {
+        {0, 1, 2, 3, 4, 5, 6, 7},  // output blade 0
+        {1, 0, 4, 5, 2, 3, 7, 6},  // output blade 1
+        {2, 4, 0, 6, 1, 7, 3, 5},  // output blade 2
+        {3, 5, 6, 0, 7, 1, 2, 4},  // output blade 3
+        {4, 2, 1, 7, 0, 6, 5, 3},  // output blade 4
+        {5, 3, 7, 1, 6, 0, 4, 2},  // output blade 5
+        {6, 7, 3, 2, 5, 4, 0, 1},  // output blade 6
+        {7, 6, 5, 4, 3, 2, 1, 0}   // output blade 7
+    };
+
+    // Coefficient matrix C - scalar multipliers
+    // Pre-compute all g coefficient combinations
+    float g0g1 = g0 * g1;
+    float g0g2 = g0 * g2;
+    float g1g2 = g1 * g2;
+    float g0g1g2 = g0 * g1 * g2;
+
+    float g_view[8][8] = {
+        {1.0f, g0, g1, g2, -g0g1, -g0g2, -g1g2, -g0g1g2},  // output blade 0
+        {1.0f, 1.0f, -g1, -g2, g1, g2, -g1g2, -g1g2},      // output blade 1
+        {1.0f, g0, 1.0f, -g2, -g0, g0g2, g2, g0g2},        // output blade 2
+        {1.0f, g0, g1, 1.0f, -g0g1, -g0, -g1, -g0g1},      // output blade 3
+        {1.0f, 1.0f, -1.0f, g2, 1.0f, -g2, g2, g2},        // output blade 4
+        {1.0f, 1.0f, -g1, -1.0f, g1, 1.0f, -g1, -g1},      // output blade 5
+        {1.0f, g0, 1.0f, -1.0f, -g0, g0, 1.0f, g0},        // output blade 6
+        {1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f} // output blade 7
+    };
+
+    // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
+    float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
+                    L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
+            }
+        }
+    }
+
+    // Initialize output to zero
+    for (int i = 0; i < B * C_out * I; ++i) {
+        out[i] = 0.0f;
+    }
+
+    float blade_accumulator[8] = {0}; // For I=8, this is 8 floats
+    float blade_accumulator_inverse[8] = {0}; // For I=8, this is 8 floats
+
+    // Main computation loops
+    for (int batch = 0; batch < B; ++batch) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            int half_I = I / 2;
+            for (int out_blade = 0; out_blade < half_I; ++out_blade) {
+
+                float blade_acc0 = 0.0f, blade_acc1 = 0.0f, blade_acc2 = 0.0f, blade_acc3 = 0.0f;
+                float blade_acc4 = 0.0f, blade_acc5 = 0.0f, blade_acc6 = 0.0f, blade_acc7 = 0.0f;
+
+                // Accumulate across all input channels (without g_coeff)
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    int weight_idx = weights_view[out_blade][in_blade];
+                    int weight_idx_inverse = weights_view[out_blade][I - in_blade - 1];
+                    
+                    for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                        const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
+                        
+                        float weight = weight_slice[weight_idx];
+                        float weight_inverse = weight_slice[weight_idx_inverse];
+                    
+                        float input_val = x[batch * (C_in * I) + in_ch * I + in_blade];
+                        
+                        // Use fmaf for fused multiply-add operation
+                        blade_accumulator[in_blade] = fmaf(weight, input_val, blade_accumulator[in_blade]);
+                        blade_accumulator_inverse[in_blade] = fmaf(weight_inverse, input_val, blade_accumulator_inverse[in_blade]);
+
+                        FLOP(4); // 2 FMAs, so 2 multiplies + 2 adds
+                    }
+                }
+
+
+                // TODO: Fully-unroll this based on the in_blade and thus multiply only with g (otherwise just return or negate!)
+                // Now apply g_coeff and reduce to final result - OPTIMIZED WITH FMAF
+                float final_accumulator = 0.0f;
+                float final_accumulator_inverse = 0.0f;
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    final_accumulator = fmaf(blade_accumulator[in_blade], g_view[out_blade][in_blade], final_accumulator);
+                    final_accumulator_inverse = fmaf(blade_accumulator_inverse[in_blade], g_view[I - out_blade - 1][in_blade], final_accumulator_inverse);
+
+                    blade_accumulator[in_blade] = 0.0f;
+                    blade_accumulator_inverse[in_blade] = 0.0f;
+                    FLOP(4); // 2 FMAs, so 2 multiplies + 2 adds
+                }
+
+                // Add bias if present
+                if (L->bias) {
+                    final_accumulator += L->bias[out_blade * C_out + out_ch];
+                    final_accumulator_inverse += L->bias[(I - out_blade - 1) * C_out + out_ch];
+                    FLOP(2);
+                }
+
+                // Store result
+                out[batch * (C_out * I) + out_ch * I + out_blade] = final_accumulator;
+                out[batch * (C_out * I) + out_ch * I + (I - out_blade - 1)] = final_accumulator_inverse;
+            }
+        }
+    }
+    
+    // Clean up weights memory
+    free(weights_reorg);
+}
+
+void optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g(
+    const CliffordLinear * __restrict L,
+    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
+    int                    B,
+    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
+{
+    const int I      = L->sig.n_blades;
+    const int C_in   = L->in_channels;
+    const int C_out  = L->out_channels;
+
+    if (I != 8) {
+        // printf("This implementation is only valid for #blades = 8 (3D Clifford)\n");
+        return;
+    }
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
+    const float g0 = L->sig.g[0];
+    const float g1 = L->sig.g[1];
+    const float g2 = L->sig.g[2];
+
+    // Lookup tables for 3D Clifford algebra (8x8 matrices)
+    // Permutation matrix P - which weight index to use
+
+    // Given the matrix is symmetric, we can load in the weight once and multiply by the weights_view inverse? Some form of unrolling?
+    int weights_view[8][8] = {
+        {0, 1, 2, 3, 4, 5, 6, 7},  // output blade 0
+        {1, 0, 4, 5, 2, 3, 7, 6},  // output blade 1
+        {2, 4, 0, 6, 1, 7, 3, 5},  // output blade 2
+        {3, 5, 6, 0, 7, 1, 2, 4},  // output blade 3
+        {4, 2, 1, 7, 0, 6, 5, 3},  // output blade 4
+        {5, 3, 7, 1, 6, 0, 4, 2},  // output blade 5
+        {6, 7, 3, 2, 5, 4, 0, 1},  // output blade 6
+        {7, 6, 5, 4, 3, 2, 1, 0}   // output blade 7
+    };
+
+    // Coefficient matrix C - scalar multipliers
+    // Pre-compute all g coefficient combinations
+    float g0g1 = g0 * g1;
+    float g0g2 = g0 * g2;
+    float g1g2 = g1 * g2;
+    float g0g1g2 = g0 * g1 * g2;
+
+    // float g_view[8][8] = {
+    //     {1.0f, g0, g1, g2, -g0g1, -g0g2, -g1g2, -g0g1g2},  // output blade 0
+    //     {1.0f, 1.0f, -g1, -g2, g1, g2, -g1g2, -g1g2},      // output blade 1
+    //     {1.0f, g0, 1.0f, -g2, -g0, g0g2, g2, g0g2},        // output blade 2
+    //     {1.0f, g0, g1, 1.0f, -g0g1, -g0, -g1, -g0g1},      // output blade 3
+    //     {1.0f, 1.0f, -1.0f, g2, 1.0f, -g2, g2, g2},        // output blade 4
+    //     {1.0f, 1.0f, -g1, -1.0f, g1, 1.0f, -g1, -g1},      // output blade 5
+    //     {1.0f, g0, 1.0f, -1.0f, -g0, g0, 1.0f, g0},        // output blade 6
+    //     {1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f} // output blade 7
+    // };
+
+    // Reorganize weights from [blades][out_channels][in_channels] to [out_channels][in_channels][blades]
+    float *weights_reorg = malloc(C_out * C_in * I * sizeof(float));
+    for (int blade = 0; blade < I; ++blade) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                weights_reorg[out_ch * C_in * I + in_ch * I + blade] = 
+                    L->weight[blade * C_out * C_in + out_ch * C_in + in_ch];
+            }
+        }
+    }
+
+    // Initialize output to zero
+    for (int i = 0; i < B * C_out * I; ++i) {
+        out[i] = 0.0f;
+    }
+
+    float blade_accumulator[8] = {0}; // For I=8, this is 8 floats
+    float blade_accumulator_inverse[8] = {0}; // For I=8, this is 8 floats
+
+    // Main computation loops
+    for (int batch = 0; batch < B; ++batch) {
+        for (int out_ch = 0; out_ch < C_out; ++out_ch) {
+            int half_I = I / 2;
+            for (int out_blade = 0; out_blade < half_I; ++out_blade) {
+
+                float blade_acc0 = 0.0f, blade_acc1 = 0.0f, blade_acc2 = 0.0f, blade_acc3 = 0.0f;
+                float blade_acc4 = 0.0f, blade_acc5 = 0.0f, blade_acc6 = 0.0f, blade_acc7 = 0.0f;
+
+                // Accumulate across all input channels (without g_coeff)
+                for (int in_blade = 0; in_blade < I; ++in_blade) {
+                    int weight_idx = weights_view[out_blade][in_blade];
+                    int weight_idx_inverse = weights_view[out_blade][I - in_blade - 1];
+                    
+                    for (int in_ch = 0; in_ch < C_in; ++in_ch) {
+                        const float *weight_slice = weights_reorg + out_ch * C_in * I + in_ch * I;
+                        
+                        float weight = weight_slice[weight_idx];
+                        float weight_inverse = weight_slice[weight_idx_inverse];
+                    
+                        float input_val = x[batch * (C_in * I) + in_ch * I + in_blade];
+                        
+                        // Use fmaf for fused multiply-add operation
+                        blade_accumulator[in_blade] = fmaf(weight, input_val, blade_accumulator[in_blade]);
+                        blade_accumulator_inverse[in_blade] = fmaf(weight_inverse, input_val, blade_accumulator_inverse[in_blade]);
+
+                        FLOP(4); // 2 FMAs, so 2 multiplies + 2 adds
+                    }
+                }
+
+                // Replace the TODO section with explicit g-coefficient multiplications
+                // Now apply g_coeff and reduce to final result - FULLY UNROLLED AND OPTIMIZED
+                float final_accumulator = 0.0f;
+                float final_accumulator_inverse = 0.0f;
+
+                switch (out_blade) {
+                    case 0: // blade 0: {1.0f, g0, g1, g2, -g0g1, -g0g2, -g1g2, -g0g1g2}
+                            // blade 7: {1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f}
+                        final_accumulator = blade_accumulator[0] +                          // 1.0f
+                                        blade_accumulator[1] * g0 +                      // g0
+                                        blade_accumulator[2] * g1 +                      // g1
+                                        blade_accumulator[3] * g2 +                      // g2
+                                        blade_accumulator[4] * (-g0g1) +                 // -g0g1
+                                        blade_accumulator[5] * (-g0g2) +                 // -g0g2
+                                        blade_accumulator[6] * (-g1g2) +                 // -g1g2
+                                        blade_accumulator[7] * (-g0g1g2);                // -g0g1g2
+                        
+                        final_accumulator_inverse = blade_accumulator_inverse[0] +          // 1.0f
+                                                blade_accumulator_inverse[1] +           // 1.0f (no multiply!)
+                                                (-blade_accumulator_inverse[2]) +        // -1.0f (just negate!)
+                                                blade_accumulator_inverse[3] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[4] +           // 1.0f (no multiply!)
+                                                (-blade_accumulator_inverse[5]) +        // -1.0f (just negate!)
+                                                blade_accumulator_inverse[6] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[7];            // 1.0f (no multiply!)
+                        FLOP(6 + 0); // 6 multiplies for normal, 0 for inverse (only adds/negates)
+                        break;
+
+                    case 1: // blade 1: {1.0f, 1.0f, -g1, -g2, g1, g2, -g1g2, -g1g2}
+                            // blade 6: {1.0f, g0, 1.0f, -1.0f, -g0, g0, 1.0f, g0}
+                        final_accumulator = blade_accumulator[0] +                          // 1.0f (no multiply!)
+                                        blade_accumulator[1] +                           // 1.0f (no multiply!)
+                                        blade_accumulator[2] * (-g1) +                   // -g1
+                                        blade_accumulator[3] * (-g2) +                   // -g2
+                                        blade_accumulator[4] * g1 +                      // g1
+                                        blade_accumulator[5] * g2 +                      // g2
+                                        blade_accumulator[6] * (-g1g2) +                 // -g1g2
+                                        blade_accumulator[7] * (-g1g2);                  // -g1g2
+                        
+                        final_accumulator_inverse = blade_accumulator_inverse[0] +          // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[1] * g0 +      // g0
+                                                blade_accumulator_inverse[2] +           // 1.0f (no multiply!)
+                                                (-blade_accumulator_inverse[3]) +        // -1.0f (just negate!)
+                                                blade_accumulator_inverse[4] * (-g0) +   // -g0
+                                                blade_accumulator_inverse[5] * g0 +      // g0
+                                                blade_accumulator_inverse[6] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[7] * g0;       // g0
+                        FLOP(6 + 4); // 6 multiplies for normal, 4 for inverse
+                        break;
+
+                    case 2: // blade 2: {1.0f, g0, 1.0f, -g2, -g0, g0g2, g2, g0g2}
+                            // blade 5: {1.0f, 1.0f, -g1, -1.0f, g1, 1.0f, -g1, -g1}
+                        final_accumulator = blade_accumulator[0] +                          // 1.0f (no multiply!)
+                                        blade_accumulator[1] * g0 +                      // g0
+                                        blade_accumulator[2] +                           // 1.0f (no multiply!)
+                                        blade_accumulator[3] * (-g2) +                   // -g2
+                                        blade_accumulator[4] * (-g0) +                   // -g0
+                                        blade_accumulator[5] * g0g2 +                    // g0g2
+                                        blade_accumulator[6] * g2 +                      // g2
+                                        blade_accumulator[7] * g0g2;                     // g0g2
+                        
+                        final_accumulator_inverse = blade_accumulator_inverse[0] +          // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[1] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[2] * (-g1) +   // -g1
+                                                (-blade_accumulator_inverse[3]) +        // -1.0f (just negate!)
+                                                blade_accumulator_inverse[4] * g1 +      // g1
+                                                blade_accumulator_inverse[5] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[6] * (-g1) +   // -g1
+                                                blade_accumulator_inverse[7] * (-g1);    // -g1
+                        FLOP(6 + 4); // 6 multiplies for normal, 4 for inverse
+                        break;
+
+                    case 3: // blade 3: {1.0f, g0, g1, 1.0f, -g0g1, -g0, -g1, -g0g1}
+                            // blade 4: {1.0f, 1.0f, -1.0f, g2, 1.0f, -g2, g2, g2}
+                        final_accumulator = blade_accumulator[0] +                          // 1.0f (no multiply!)
+                                        blade_accumulator[1] * g0 +                      // g0
+                                        blade_accumulator[2] * g1 +                      // g1
+                                        blade_accumulator[3] +                           // 1.0f (no multiply!)
+                                        blade_accumulator[4] * (-g0g1) +                 // -g0g1
+                                        blade_accumulator[5] * (-g0) +                   // -g0
+                                        blade_accumulator[6] * (-g1) +                   // -g1
+                                        blade_accumulator[7] * (-g0g1);                  // -g0g1
+                        
+                        final_accumulator_inverse = blade_accumulator_inverse[0] +          // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[1] +           // 1.0f (no multiply!)
+                                                (-blade_accumulator_inverse[2]) +        // -1.0f (just negate!)
+                                                blade_accumulator_inverse[3] * g2 +      // g2
+                                                blade_accumulator_inverse[4] +           // 1.0f (no multiply!)
+                                                blade_accumulator_inverse[5] * (-g2) +   // -g2
+                                                blade_accumulator_inverse[6] * g2 +      // g2
+                                                blade_accumulator_inverse[7] * g2;       // g2
+                        FLOP(6 + 4); // 6 multiplies for normal, 4 for inverse
+                        break;
+                }
+
+                // Clear accumulators for next iteration
+                for (int i = 0; i < I; ++i) {
+                    blade_accumulator[i] = 0.0f;
+                    blade_accumulator_inverse[i] = 0.0f;
+                }
+
+                // Add bias if present
+                if (L->bias) {
+                    final_accumulator += L->bias[out_blade * C_out + out_ch];
+                    final_accumulator_inverse += L->bias[(I - out_blade - 1) * C_out + out_ch];
+                    FLOP(2);
+                }
+
+                // Store result
+                out[batch * (C_out * I) + out_ch * I + out_blade] = final_accumulator;
+                out[batch * (C_out * I) + out_ch * I + (I - out_blade - 1)] = final_accumulator_inverse;
+            }
+        }
+    }
+    
+    // Clean up weights memory
+    free(weights_reorg);
+}
+
 
 // Added float fma ops from math.h
 void optimized_linear_v3(
@@ -762,12 +1541,12 @@ void optimized_linear_v3(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        K = (float *)__builtin_assume_aligned(K, 64);
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -856,12 +1635,12 @@ void optimized_linear_v4(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        K = (float *)__builtin_assume_aligned(K, 64);
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -975,12 +1754,12 @@ void optimized_linear_v5(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        K = (float *)__builtin_assume_aligned(K, 64);
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -1102,14 +1881,14 @@ void optimized_linear_v6_avx(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    // The following is a compiler hint. Actual alignment depends on malloc behavior from get_kernel
-    // or if _mm_malloc was used inside get_kernel.
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        // The following is a compiler hint. Actual alignment depends on malloc behavior from get_kernel
+        // or if _mm_malloc was used inside get_kernel.
+        K = (float *)__builtin_assume_aligned(K, 64); 
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -1201,12 +1980,12 @@ void optimized_linear_v7_avx_k_accum(
     BYTES_WRITTEN(output_bytes);
 
     // 1) Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        K = (float *)__builtin_assume_aligned(K, 64); 
 
     // 2) Process each sample on a single core
     for (int b = 0; b < B; ++b) {
@@ -1322,12 +2101,12 @@ void optimized_linear_v8_avx_more_unroll(
     BYTES_WRITTEN(output_bytes);
 
     // Build the Clifford-kernel fresh every time
-    int nb_unused;
+        int nb_unused;
     float *K;
-    L->get_kernel(L->weight, L->sig.g,
-                  C_in, C_out,
-                  &nb_unused, &K);
-    K = (float *)__builtin_assume_aligned(K, 64);
+        L->get_kernel(L->weight, L->sig.g,
+                      C_in, C_out,
+                      &nb_unused, &K);
+        K = (float *)__builtin_assume_aligned(K, 64); 
 
     for (int b = 0; b < B; ++b) {
         float Xf[d_flat]; 
@@ -1451,10 +2230,10 @@ void optimized_linear_v9_scalar_no_xf(
     // 1) Build the Clifford-kernel fresh every time
     float *K_kernel = NULL;
     int needed_K = K_cols * K_rows;
-    if (needed_K > 0) {
-        int nb_unused;
-        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K_kernel);
-        if (K_kernel) K_kernel = (float *)__builtin_assume_aligned(K_kernel, 64);
+        if (needed_K > 0) {
+            int nb_unused;
+            L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K_kernel);
+            if (K_kernel) K_kernel = (float *)__builtin_assume_aligned(K_kernel, 64);
     }
 
     // 2) Process each sample
@@ -1551,10 +2330,10 @@ void optimized_linear_v10_avx_no_xf(
     // Build the Clifford-kernel fresh every time
     float *K_kernel = NULL;
     int needed_K = K_cols * K_rows;
-    if (needed_K > 0) {
-        int nb_unused;
-        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K_kernel);
-        if (K_kernel) K_kernel = (float *)__builtin_assume_aligned(K_kernel, 64);
+        if (needed_K > 0) {
+            int nb_unused;
+            L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K_kernel);
+            if (K_kernel) K_kernel = (float *)__builtin_assume_aligned(K_kernel, 64);
     }
 
     if (needed_K > 0 && !K_kernel) { 
@@ -1857,7 +2636,13 @@ void register_linear_functions() {
     add_linear_function(optimized_linear_1d_kernel_reordered_weights, "optimized_linear_1d_kernel_reordered_weights");
     add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum");
     add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma");
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma");
+    add_linear_function(optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g");
     // add_linear_function(optimized_linear_simple, "optimized_simple");
     // add_linear_function(optimized_no_kernel_v0, "optimized_no_kernel_v0");
     // add_linear_function(optimized_linear_v2, "optimized_v2_k_accum");
