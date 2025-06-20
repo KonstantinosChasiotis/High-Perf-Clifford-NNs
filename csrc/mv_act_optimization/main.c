@@ -87,6 +87,8 @@ int main(int argc, char** argv) {
         setup_act(B, C, I_in, I_full, K);
 
         total_flops = 0;
+        total_bytes_read = 0;
+        total_bytes_written = 0;
         activation_func f = get_registered_function(which);
         FLOP_ENABLED = 1;
         f(
@@ -101,13 +103,17 @@ int main(int argc, char** argv) {
         );
         FLOP_ENABLED = 0;
         uint64_t fl = total_flops;
+        uint64_t bytes_read = total_bytes_read;
+        uint64_t bytes_written = total_bytes_written;
 
         double cycles = benchmark_act_by_index(which, B);
 
-        printf("%d,%.2f,%llu\n",
+        printf("%d,%.2f,%llu,%llu,%llu\n",
                B,
                cycles,
-               (unsigned long long)fl);
+               (unsigned long long)fl,
+               (unsigned long long)bytes_read,
+               (unsigned long long)bytes_written);
 
         cleanup_act();
     }

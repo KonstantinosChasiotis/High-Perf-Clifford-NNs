@@ -79,12 +79,19 @@ int main(int argc, char** argv) {
         f(L_lin, lin_x, B, out_temp);
         FLOP_ENABLED = 0;
         uint64_t measured_flops = total_flops;
+        uint64_t p_bytes_read = 0;
 
         double cycles = benchmark_linear_by_index(which_func, L_lin, lin_x, out_temp, B);
-        printf("%d,%.2f,%llu\n",
+
+        uint64_t final_bytes_read = 0;
+        final_bytes_read = total_bytes_read;
+
+        printf("%d,%.2f,%llu,%llu,%llu\n",
                B,
                cycles,
-               (unsigned long long)measured_flops);
+               (unsigned long long)measured_flops,
+               (unsigned long long)final_bytes_read,
+               (unsigned long long)total_bytes_written);
 
         free(out_temp);
 

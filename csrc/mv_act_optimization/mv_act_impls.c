@@ -23,6 +23,16 @@ static void baseline_act(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * I_in * sizeof(float));        // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(I_in * sizeof(int));                  // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * I_in * sizeof(float));     // out
+    
     mv_act_forward(
       x, B, C, I_in, I_full,
       input_blades, weight, K,
@@ -238,6 +248,16 @@ void optimized_act_v5(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * I_in * sizeof(float));        // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(I_in * sizeof(int));                  // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * I_in * sizeof(float));     // out
+    
     // ----------------------------------------------------------------------
     // 1) Build inverse map: blade index → input slot (or -1 if unused)
     int *inv = malloc((size_t)I_full * sizeof *inv);
@@ -497,6 +517,16 @@ void optimized_act_v7(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * I_in * sizeof(float));        // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(I_in * sizeof(int));                  // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * I_in * sizeof(float));     // out
+    
     // 1) Build inverse map
     int *inv = malloc((size_t)I_full * sizeof *inv);
     if (!inv) return;
@@ -626,6 +656,16 @@ void optimized_act_v8(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * I_in * sizeof(float));        // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(I_in * sizeof(int));                  // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * I_in * sizeof(float));     // out
+    
     // L1 data cache ~32 KB (per core). We choose tiles so the working-set per tile:
     //   tc * I_in * sizeof(float)  (data slice)  + LUT/table ≤ 32 KB   
     const int tb = 64;// batch tile
@@ -1115,6 +1155,16 @@ void optimized_act_v11(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * slots * sizeof(float));       // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(slots * sizeof(int));                 // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * slots * sizeof(float));    // out
+    
     if (!lut_v11_initialized) init_sigmoid_lut_v11();
 
     const int tb = 64;
@@ -1391,6 +1441,16 @@ void optimized_act_v13(
     const float  *bias,
     float        *out
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * slots * sizeof(float));       // x
+    BYTES_READ(C * K * sizeof(float));               // weight
+    BYTES_READ(C * sizeof(float));                   // bias
+    BYTES_READ(slots * sizeof(int));                 // input_blades
+    BYTES_READ(K * sizeof(int));                     // kernel_blades
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * slots * sizeof(float));    // out
+    
     if (!lut_v13_initialized) init_sigmoid_lut_v13();
 
     const int   tb    = 64;

@@ -45,7 +45,7 @@ echo "→ Found $FUNC_COUNT functions."
 for idx in $(seq 0 $((FUNC_COUNT-1))); do
   NAME=$(./groupnorm_benchmark --name $idx)
   echo "$NAME"              >> "$CSV"
-  echo "batch,cycles,flops" >> "$CSV"
+  echo "batch,cycles,flops,bytes_read,bytes_written" >> "$CSV"
 
   for B in "${BATCHES[@]}"; do
     printf "  %-15s batch=%5d … " "$NAME" "$B"

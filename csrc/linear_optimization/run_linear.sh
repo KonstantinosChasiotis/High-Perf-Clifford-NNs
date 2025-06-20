@@ -2,8 +2,9 @@
 set -e
 
 echo "Compiling…"
+
 gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function \
-     -DTRACEFLOPS \
+    -DPMU -DTRACEFLOPS \
     main.c \
     linear_bench.c \
     linear_impls.c \
@@ -11,6 +12,7 @@ gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function \
     ../clifford_linear.c \
     ../flops.c \
     -o linear_benchmark
+
 echo "Done."
 
 if [ $# -lt 1 ]; then
@@ -46,7 +48,7 @@ echo "→ Found ${FUNC_COUNT} functions."
 for idx in $(seq 0 $((FUNC_COUNT-1))); do
   NAME=$(./linear_benchmark --name $idx)
   echo -e "\n${NAME}"    >> "$CSV"
-  echo "batch,cycles,flops" >> "$CSV"
+  echo "batch,cycles,flops,bytes_read,bytes_written" >> "$CSV"
 
   for B in "${BATCHES[@]}"; do
     printf "  %-15s batch=%5d … " "$NAME" "$B"

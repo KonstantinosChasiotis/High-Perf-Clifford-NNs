@@ -74,6 +74,24 @@ static void  baseline_groupnorm(
     float         eps,
     float        *x_norm
 ){
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * D * _I * sizeof(float));      // x
+    if (running) {
+        BYTES_READ(C * _I * sizeof(float));          // running_mean_orig
+        BYTES_READ(C * _I * _I * sizeof(float));     // running_cov_orig
+    }
+    if (scaling) {
+        BYTES_READ(C * _I * _I * sizeof(float));     // weight_orig
+        BYTES_READ(C * _I * _I * sizeof(float));     // bias_orig
+    }
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * D * _I * sizeof(float));   // x_norm
+    if (running && training) {
+        BYTES_WRITTEN(C * _I * sizeof(float));       // running_mean_orig (updated)
+        BYTES_WRITTEN(C * _I * _I * sizeof(float));  // running_cov_orig (updated)
+    }
+    
 
     //basic constants
     int dim0 = (B*C)/num_groups;
@@ -1294,6 +1312,24 @@ static void optimized_groupnorm_v3(
     float         eps,
     float        *x_norm
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * D * I * sizeof(float));       // x
+    if (running) {
+        BYTES_READ(C * I * sizeof(float));           // running_mean_orig
+        BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
+    }
+    if (scaling) {
+        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
+        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+    }
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * D * I * sizeof(float));    // x_norm
+    if (running && training) {
+        BYTES_WRITTEN(C * I * sizeof(float));        // running_mean_orig (updated)
+        BYTES_WRITTEN(C * I * I * sizeof(float));    // running_cov_orig (updated)
+    }
+    
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -4428,6 +4464,24 @@ static void optimized_groupnorm_v12(
     float         eps,
     float        *x_norm
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * D * I * sizeof(float));       // x
+    if (running) {
+        BYTES_READ(C * I * sizeof(float));           // running_mean_orig
+        BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
+    }
+    if (scaling) {
+        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
+        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+    }
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * D * I * sizeof(float));    // x_norm
+    if (running && training) {
+        BYTES_WRITTEN(C * I * sizeof(float));        // running_mean_orig (updated)
+        BYTES_WRITTEN(C * I * I * sizeof(float));    // running_cov_orig (updated)
+    }
+    
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -7926,6 +7980,24 @@ static void optimized_groupnorm_v20(
     float         eps,
     float        *x_norm
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * D * I * sizeof(float));       // x
+    if (running) {
+        BYTES_READ(C * I * sizeof(float));           // running_mean_orig
+        BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
+    }
+    if (scaling) {
+        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
+        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+    }
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * D * I * sizeof(float));    // x_norm
+    if (running && training) {
+        BYTES_WRITTEN(C * I * sizeof(float));        // running_mean_orig (updated)
+        BYTES_WRITTEN(C * I * I * sizeof(float));    // running_cov_orig (updated)
+    }
+    
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;
@@ -10346,6 +10418,24 @@ static void optimized_groupnorm_v26(
     float         eps,
     float        *x_norm
 ) {
+    // Track bytes read from input arrays
+    BYTES_READ(B * C * D * I * sizeof(float));       // x
+    if (running) {
+        BYTES_READ(C * I * sizeof(float));           // running_mean_orig
+        BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
+    }
+    if (scaling) {
+        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
+        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+    }
+    
+    // Track bytes written to output
+    BYTES_WRITTEN(B * C * D * I * sizeof(float));    // x_norm
+    if (running && training) {
+        BYTES_WRITTEN(C * I * sizeof(float));        // running_mean_orig (updated)
+        BYTES_WRITTEN(C * I * I * sizeof(float));    // running_cov_orig (updated)
+    }
+    
 
     int dim0 = (B*C)/num_groups;
     int group_size = C/num_groups;

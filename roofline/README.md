@@ -2,18 +2,18 @@
 
 ## Usage
 
-From base directory, run:
-
-```bash
-cd roofline
-python
->>> from roofline_plot import RooflinePlot; plotter = RooflinePlot(); csv = 'dummy_data.csv';  plotter.plot(csv)
-```
-
 Make sure to have dependenncies installed:
 
 ```bash
+python -m venv venv
+source venv/bin/activate
 pip install matplotlib pandas
+```
+
+From roofline directory, run:
+
+```bash
+python roofline_plot.py "path/to/csv"
 ```
 
 ## Output
