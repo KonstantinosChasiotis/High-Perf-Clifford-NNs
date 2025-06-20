@@ -124,7 +124,7 @@ class RooflinePlot:
         ax.grid(True, which='minor', color='white', linestyle='-', linewidth=1)
 
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(handles, labels, loc='lower right', prop={'size': 14, 'weight': 'bold'}, framealpha=0)
+        ax.legend(handles, labels, loc='lower right', prop={'size': 11, 'weight': 'bold'})
 
         # Tight layout
         fig.tight_layout(rect=[0, 0, 1, 0.85])
