@@ -218,12 +218,14 @@ Plotting scripts expect:
 ---
 
 ### Layer – Geometric Clifford algebra linear layers (Kons, Arnie)
+- [X] Write the baseline implementation of the layer (KONS)
+- [X] Start with some very basic optimizations (ARNIE, KONS)
 - [X] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  (ARNIE)
 - [X] Use loop unrolling and accumulators (ARNIE)
-- [X] Leverage SIMD instructions (AVX2)  (ARNIE)
-- [ ] Everywhere that use `malloc` (so sig init and destruct): remove it so it’s not in the performance measure  
+- [X] Leverage SIMD instructions (AVX2)  (ARNIE) 
 - [X] Cache kernel **K** across passes – as we are doing inference (KONS)
 - [X] ~~Use BLAS to replace matrix-vector multiplication~~ <- No, we'll need a specialize matrix multiplication fusing the kernels (ARNIE)
+- [X] Fix some bugs regarding seg faults and core dumps for optimizations v4, v5, v6 (KONS)
 - [X] Potentially avoid flattening -> tried this, however seems like bad cache accesses leads to degraded performance (~0.75x baseline) (ARNIE)
 - [ ] Implement specialized matrix-matrix multiplication by fusing kernel construction (remove kernel construction & redundant elements, try avoid flattening/unflattening) (ARNIE)
 - [ ] Look into Sparse Matrix-Vector multiplication 
@@ -231,6 +233,7 @@ Plotting scripts expect:
 ---
 
 ### Layer – Geometric Clifford algebra nonlinearities (Mikke, Kons)
+- [X] Write the baseline implementation of the layer (MIKKE)
 - [X] Fails at certain test – so review the code (MIKKE)  
 - [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [ ] Use loop unrolling and accumulators  
@@ -242,6 +245,7 @@ Plotting scripts expect:
 ---
 
 ### Layer – Group normalizations (Simon)
+- [X] Write the baseline implementation of the layer 
 - [X] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [X] Use loop unrolling and accumulators  
 - [X] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
@@ -252,13 +256,20 @@ Plotting scripts expect:
 
 ---
 
-### Benchmarking and plots (Kons, Arnie)
-- [X] Performance: Kons already has  
+### Benchmarking Pipeline (Kons)
+- [X] Create a benhcmarking file that measures the cycles of a function (using calibration for accurate measurements).
+- [X] Utilise for better results the `tsc_x86.h` file provided by the course.
+- [X] Create a functionality that allows for functions to be registered, and when run, their cycles being measured (CodeExpert style of functionality).
+- [X] Integrate the above into a pipeline that can be executed via a single bash script for ease: allocate required memory, measure cycles of registered functions, return.
+- [X] Add functionality for plotting performance plots via the same bash script: compile and record cycles for the same registered functions over multiple inputs and call a python file from the bash script to graph. 
+- [X] Create the relevant infrastracture and bash scripts for all three layers. 
+
+---
+
+### Roofline Plots (Arnie)
 - [X] Roofline: Arnie – take the CSV and do the plotting  
 - [X] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
 - [X] Need to decide what’s in cache and what’s in memory ->  -> using special PAPI mem-access library
-
----
 
 ### Project server section update:
 - [X] 1. Project description
