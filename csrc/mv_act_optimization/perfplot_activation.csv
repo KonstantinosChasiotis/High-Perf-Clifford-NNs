@@ -1,4 +1,4 @@
-Baseline
+baseline
 batch,cycles,flops,bytes_read,bytes_written
 16,17462.81,5632,8560,8192
 32,35297.10,11264,16752,16384
