@@ -11482,7 +11482,7 @@ static void optimized_groupnorm_all_dim(
 
     switch (I){
         case 8:
-            optimized_groupnorm_v23(
+            optimized_groupnorm_v26(
                                         x,
                                         B,
                                         C,
@@ -11502,7 +11502,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 4:
-            optimized_groupnorm_v24(
+            optimized_groupnorm_v27(
                                         x,
                                         B,
                                         C,
@@ -11522,7 +11522,7 @@ static void optimized_groupnorm_all_dim(
                                     );
             break;
         case 2:
-            optimized_groupnorm_v25(
+            optimized_groupnorm_v28(
                                         x,
                                         B,
                                         C,
@@ -11558,23 +11558,25 @@ static void optimized_groupnorm_all_dim(
       that when we sum the mean we sum over num_groups*D multivectors, but rather one would expect to sum over
       "size of one group"*D when calculating the mean within one group. Whether the naming as it is now is "right"
       or "wrong" is not clear. This is mentioned here to aid understanding.
-    - Versions v1 - v12, v16 - v20 and v23 are 3D only
-    - Versions v14, v21 and v24 are 2D only
-    - Versions v15, v22 and v25 are 1D only
+    - Versions v1 - v12, v16 - v20, v23 and v26 are 3D only
+    - Versions v14, v21, v24 and v27 are 2D only
+    - Versions v15, v22, v25 and v28 are 1D only
     - Versions baseline, v0, v13 and all_dim work on 1D, 2D and 3D
-    - Versions v23 (3D), v24 (2D) and v25 (1D) are the most optimzed versions for each dimension
+    - Versions v26 (3D), v27 (2D) and v28 (1D) are the most optimzed versions for each dimension
 */
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
 // ——— Register them in the order you want them tested ———
 void register_groupnorm_functions(void) {
-    add_groupnorm_function(baseline_groupnorm,      "baseline_groupnorm");
+    add_groupnorm_function(baseline_groupnorm,      "baseline");
     /*
     add_groupnorm_function(optimized_groupnorm_v0,  "optimized_groupnorm_v0"); //invert diag back sub
     add_groupnorm_function(optimized_groupnorm_v1,  "optimized_groupnorm_v1"); //mean vectorized
     add_groupnorm_function(optimized_groupnorm_v2,  "optimized_groupnorm_v2"); //cov vectorized
-    add_groupnorm_function(optimized_groupnorm_v3,  "optimized_groupnorm_v3"); //max permute temp vars
+    */
+    add_groupnorm_function(optimized_groupnorm_v3,  "mean_cov_max opt"); //max permute temp vars
+    /*
     add_groupnorm_function(optimized_groupnorm_v4,  "optimized_groupnorm_v4"); //vectorize backsubstitution
     add_groupnorm_function(optimized_groupnorm_v5,  "optimized_groupnorm_v5"); //dont transpose cholesky decomp
     add_groupnorm_function(optimized_groupnorm_v6,  "optimized_groupnorm_v6"); //8 accumulators for cov
@@ -11584,30 +11586,28 @@ void register_groupnorm_functions(void) {
     add_groupnorm_function(optimized_groupnorm_v10, "optimized_groupnorm_v10"); //reduction for max
     add_groupnorm_function(optimized_groupnorm_v11, "optimized_groupnorm_v11"); //backsub manual 2 way unroll
     */
-    //add_groupnorm_function(optimized_groupnorm_v12, "optimized_groupnorm_v12"); //backsub manual 4 way unroll
-    
+    add_groupnorm_function(optimized_groupnorm_v12, "decomp_backsub opt"); //backsub manual 4 way unroll
+
     //add_groupnorm_function(optimized_groupnorm_v13, "optimized_groupnorm_v13"); //v12 with unoptimized 1D and 2D support (strong 3D slowdown)
     //add_groupnorm_function(optimized_groupnorm_v14, "optimized_groupnorm_v14"); //optimzed 2D only (base v12)
-    add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only (base v12)
+    //add_groupnorm_function(optimized_groupnorm_v15, "optimized_groupnorm_v15"); //optimzed 1D only (base v12)
     
     //add_groupnorm_function(optimized_groupnorm_v16, "optimized_groupnorm_v16"); //backsub manual 4 way unroll better layout (base v12)
-    //add_groupnorm_function(optimized_groupnorm_v17, "optimized_groupnorm_v17"); //fuse reshape and backsub (worse for 32)
+    //add_groupnorm_function(optimized_groupnorm_v17, "optimized_groupnorm_v17");   //fuse reshape and backsub (worse for 32)
+
     //add_groupnorm_function(optimized_groupnorm_v18, "optimized_groupnorm_v18"); //no scaling weight temp array blowup (based v12)
     //add_groupnorm_function(optimized_groupnorm_v19, "optimized_groupnorm_v19"); //vectorize scaling
-    //add_groupnorm_function(optimized_groupnorm_v20, "optimized_groupnorm_v20"); //vectorized scaling 4 accumlators
-    
+    add_groupnorm_function(optimized_groupnorm_v20, "scaling opt"); //vectorized scaling 4 accumlators
     //add_groupnorm_function(optimized_groupnorm_v21, "optimized_groupnorm_v21"); //2D version, scaling optimization (base v14) (scaling base v20)
-    add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //1D version, scaling optimization (base v15) (scaling base v21)
+    //add_groupnorm_function(optimized_groupnorm_v22, "optimized_groupnorm_v22"); //1D version, scaling optimization (base v15) (scaling base v21)
 
     //add_groupnorm_function(optimized_groupnorm_v23, "optimized_groupnorm_v23"); //fuse permutes into step main loops to improve cache locality (base v20)
-
     //add_groupnorm_function(optimized_groupnorm_v24, "optimized_groupnorm_v24"); //2D version, fuse permutes (base v21) (decomp, backsub base v23)
-    add_groupnorm_function(optimized_groupnorm_v25, "optimized_groupnorm_v25"); //1D version, fuse permutes (base v22) (decomp, backsub base v23)
+    //add_groupnorm_function(optimized_groupnorm_v25, "optimized_groupnorm_v25"); //1D version, fuse permutes (base v22) (decomp, backsub base v23)
 
-    //add_groupnorm_function(optimized_groupnorm_v26, "optimized_groupnorm_v26"); //add the reshape form v17 (base v23)
-
+    add_groupnorm_function(optimized_groupnorm_v26, "cache opt"); //add the reshape form v17 (base v23)
     //add_groupnorm_function(optimized_groupnorm_v27, "optimized_groupnorm_v27"); //2D version, add v26 Backsub permute (base v24) (backsub base v26)
-    add_groupnorm_function(optimized_groupnorm_v28, "optimized_groupnorm_v28"); //1D version, add v26 Backsub permute (base v25) (backsub base v26)
+    //add_groupnorm_function(optimized_groupnorm_v28, "optimized_groupnorm_v28"); //1D version, add v26 Backsub permute (base v25) (backsub base v26)
 
     //add_groupnorm_function(optimized_groupnorm_all_dim, "optimized_groupnorm_all_dim"); //switch to best version of each dimention
 }
