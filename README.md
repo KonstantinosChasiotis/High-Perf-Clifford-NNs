@@ -210,13 +210,12 @@ pip install matplotlib pandas
 From roofline directory, run:
 
 ```bash
-python roofline_plot.py "path/to/csv"
+python roofline_plot.py ../csrc/linear_optimization/baseline_perfplot_linear.csv
+python roofline_plot.py ../csrc/linear_optimization/perfplot_activation.csv
+python roofline_plot.py ../csrc/group_norm_optimization/perfplot_groupnorm.csv
 ```
 
-## Output
 
-Example output:
-![Roofline Plot](roofline_example.png)
 
 ## 📝 To-Dos
 ### WEEKS 06.05 - 20.05
