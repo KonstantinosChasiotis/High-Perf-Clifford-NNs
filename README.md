@@ -241,7 +241,7 @@ Plotting scripts expect:
 
 ---
 
-### Layer – Group normalizations (Simon, Kons)
+### Layer – Group normalizations (Simon)
 - [X] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [X] Use loop unrolling and accumulators  
 - [X] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
