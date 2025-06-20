@@ -4,7 +4,7 @@ set -e
 echo "Compiling…"
 
 gcc -O3 -march=native -std=c99 -Wall -Wno-unused-function \
-    -DPMU -DTRACEFLOPS \
+    -DTRACEFLOPS \
     main.c \
     linear_bench.c \
     linear_impls.c \
@@ -23,7 +23,7 @@ fi
 MODE=$1
 DIM=2
 CHANNELS=16
-BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384)
+BATCHES=(16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536)
 CSV=baseline_perfplot_linear.csv
 
 if [ "$MODE" = "0" ]; then
