@@ -8,882 +8,528 @@
 #include <stdio.h>     // For fprintf in case of errors (though not strictly used in final proposal)
 #include <math.h>      // For fmaf
 
+
+// --------------------------------------------------------------------
+// Scratch buffer for flattening
+// --------------------------------------------------------------------
+static float  *scratch_Xf = NULL;
+static size_t  scratch_sz = 0;
+static inline float* ensure_scratch(size_t needed) {
+    if (scratch_sz < needed) {
+        free(scratch_Xf);
+        scratch_Xf = malloc(needed * sizeof *scratch_Xf);
+        scratch_sz = needed;
+    }
+    return scratch_Xf;
+}
+
 // 1. =========================== Baseline ===========================
+
+// --------------------------------------------------------------------
+// 1) baseline_linear
+// --------------------------------------------------------------------
 void baseline_linear(const CliffordLinear* L, const float* x, int B, float* out) {
     clifford_linear_forward(L, x, B, out);
 }
 
+
 // 2. =========================== Basic Scalar Optimizations ===========================
-void optimized_linear_basic( //v1
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
 
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
+// --------------------------------------------------------------------
+// 2) optimized_linear_simple
+// --------------------------------------------------------------------
+void optimized_linear_v1(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
 
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        // tell the compiler it's aligned (malloc is ≥16B on most platforms)
-        K = (float *)__builtin_assume_aligned(K, 64);
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        //----------------------------------------
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        //----------------------------------------
-        float Xf[d_flat];                // C99 VLA: watch your stack size!
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        //----------------------------------------
-        // 2b) For each output-blade & channel, dot-product
-        //----------------------------------------
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;   // row in K & bias
-                float acc  = 0.0f;
-                if (L->bias) {
-                    acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                }
-                float *Krow = K + (size_t)r * d_flat;
-
-                // Implement -1, 0, 1 based on g value (i.e. no kernel)
-                // Don't malloc the kernel, use static registers or direct?
-                for (int d = 0; d < C_in * I; d++){
-                    acc += Krow[d] * Xf[d];
-                    FLOP(2);
-                }
-
-                // write back into exactly the same layout as baseline:
-                // out[b*(C_out*I) + oc*I + i_out]
-                outb[ oc*I + i_out ] = acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-    
-    // Clean up kernel memory
-    free(K);
-}
-
-void optimized_linear_v2(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build & cache the Clifford-kernel once
-    static float *K       = NULL;
-    static int    last_sz = 0;
-    int           needed  = d_flat * n_flat;
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
     if (last_sz != needed) {
         free(K);
         int nb_unused;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
         last_sz = needed;
-        // tell the compiler it's aligned (malloc is ≥16B on most platforms)
-        K = (float *)__builtin_assume_aligned(K, 64);
     }
 
-    // 2) Process each sample on a single core
+    float *Xf = ensure_scratch(d_flat);
+
     for (int b = 0; b < B; ++b) {
-        //----------------------------------------
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        //----------------------------------------
-        float Xf[d_flat];                // C99 VLA: watch your stack size!
-        const float *xb = x + b * (C_in * I);
+        const float *xb = x + (size_t)b * d_flat;
+        /* flatten */
         for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
+            size_t dst = (size_t)i_in * C_in;
             for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
             }
         }
 
-        //----------------------------------------
-        // 2b) For each output-blade & channel, dot-product
-        //----------------------------------------
-        float *outb = out + b * (C_out * I);
+        float *outb = out + (size_t)b * n_flat;
         for (int i_out = 0; i_out < I; ++i_out) {
             for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;   // row in K & bias
-                
-                float acc0 = 0.0f;
-                float acc1 = 0.0f;
-                float acc2 = 0.0f;
-                float acc3 = 0.0f;
-
-                if (L->bias) {
-                    acc0 = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                }
-                
+                int r = i_out * C_out + oc;
+                float acc = L->bias ? L->bias[r] : 0.0f; if (L->bias) FLOP(1);
                 float *Krow = K + (size_t)r * d_flat;
 
-                int d = 0;
-                // Calculate limit for the main unrolled loop to handle multiples of 4
-                int limit_unrolled = (d_flat / 4) * 4; 
-                for (; d < limit_unrolled; d += 4) { // Unroll by 4, using 4 accumulators
-                    acc0 += Krow[d+0] * Xf[d+0];
-                    acc1 += Krow[d+1] * Xf[d+1];
-                    acc2 += Krow[d+2] * Xf[d+2];
-                    acc3 += Krow[d+3] * Xf[d+3];
-                    FLOP(8); // 4 muls, 4 adds
-                    // BYTES_READ(sizeof(float) * 8); // 4 from Krow, 4 from Xf
-                }
-                
-                // Sum the k-accumulators
-                float total_acc = acc0 + acc1 + acc2 + acc3;
-                FLOP(3); // 3 adds
-
-                // Clean-up remaining elems
-                for (; d < d_flat; ++d) {
-                    total_acc += Krow[d] * Xf[d];
-                    FLOP(2); // 1 mul,1 add
-                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
-                }
-
-                // write back into exactly the same layout as baseline:
-                // out[b*(C_out*I) + oc*I + i_out]
-                outb[ oc*I + i_out ] = total_acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-}
-
-// Added float fma ops from math.h
-void optimized_linear_v3(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        K = (float *)__builtin_assume_aligned(K, 64);
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        float Xf[d_flat];
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        // 2b) For each output-blade & channel, dot-product
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;
-                
-                float acc0 = 0.0f;
-                float acc1 = 0.0f;
-                float acc2 = 0.0f;
-                float acc3 = 0.0f;
-
-                if (L->bias) {
-                    acc0 = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                }
-                
-                float *Krow = K + (size_t)r * d_flat;
-
-                int d = 0;
-                int limit_unrolled = (d_flat / 4) * 4; 
-                for (; d < limit_unrolled; d += 4) {
-                    //Apply the fma op for the accumulators
-                    acc0 = fmaf(Krow[d+0], Xf[d+0], acc0);
-                    acc1 = fmaf(Krow[d+1], Xf[d+1], acc1);
-                    acc2 = fmaf(Krow[d+2], Xf[d+2], acc2);
-                    acc3 = fmaf(Krow[d+3], Xf[d+3], acc3);
-                    FLOP(8); // 4 FMAs, so 4 muls and 4adds
-                    // BYTES_READ(sizeof(float) * 8); // 4 from Krow, 4 from Xf
-                }
-                
-                float total_acc = acc0 + acc1 + acc2 + acc3;
-                FLOP(3);
-
-                for (; d < d_flat; ++d) {
-                    total_acc = fmaf(Krow[d], Xf[d], total_acc);
-                    FLOP(2); // 1 FMA (i.e. 1 mul & 1 add)
-                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
-                }
-
-                outb[ oc*I + i_out ] = total_acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-    
-    // Clean up kernel memory
-    free(K);
-}
-
-// TODO:  Tried tiling matrix mult, but doesn't lead to much speed-up (probably reuqires tuning, but maybe TA suggests us to use BLAS?)
-void optimized_linear_v4(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        K = (float *)__builtin_assume_aligned(K, 64);
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        float Xf[d_flat]; // C99 VLA: watch your stack size!
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        // 2b) For each output-blade & channel, dot-product
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;   // row in K & bias
-                float *Krow = K + (size_t)r * d_flat;
-
-                float final_acc;
-                if (L->bias) {
-                    final_acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                } else {
-                    final_acc = 0.0f;
-                }
-
-                const int D_BLOCK_SIZE = 256; // Trying a tile size of 256
-
-                // Try using blocking to try improve cache perofmance
-                for (int d_block_base = 0; d_block_base < d_flat; d_block_base += D_BLOCK_SIZE) {
-                    float acc0_tile = 0.0f;
-                    float acc1_tile = 0.0f;
-                    float acc2_tile = 0.0f;
-                    float acc3_tile = 0.0f;
-
-                    int d_block_end = d_block_base + D_BLOCK_SIZE;
-                    if (d_block_end > d_flat) {
-                        d_block_end = d_flat;
-                    }
-                    
-                    int current_block_num_elems = d_block_end - d_block_base;
-                    if (current_block_num_elems <= 0) continue; 
-
-                    int d_tile_idx = 0; 
-                    
-                    float *Krow_tile_ptr = Krow + d_block_base;
-                    float *Xf_tile_ptr   = Xf   + d_block_base;
-
-                    // Keep using the fma + k accumulators like before
-                    int limit_unrolled_tile = (current_block_num_elems / 4) * 4;
-                    for (; d_tile_idx < limit_unrolled_tile; d_tile_idx += 4) {
-                        acc0_tile = fmaf(Krow_tile_ptr[d_tile_idx+0], Xf_tile_ptr[d_tile_idx+0], acc0_tile);
-                        acc1_tile = fmaf(Krow_tile_ptr[d_tile_idx+1], Xf_tile_ptr[d_tile_idx+1], acc1_tile);
-                        acc2_tile = fmaf(Krow_tile_ptr[d_tile_idx+2], Xf_tile_ptr[d_tile_idx+2], acc2_tile);
-                        acc3_tile = fmaf(Krow_tile_ptr[d_tile_idx+3], Xf_tile_ptr[d_tile_idx+3], acc3_tile);
-                        FLOP(8);
-                        // BYTES_READ(sizeof(float) * 8); // 4 from Krow_tile_ptr, 4 from Xf_tile_ptr
-                    }
-
-                    float total_acc_tile = 0.0f;
-                    if (limit_unrolled_tile > 0) { 
-                        total_acc_tile = acc0_tile + acc1_tile + acc2_tile + acc3_tile;
-                        FLOP(3);
-                    }
-                    
-                    // Process whatevers remaining
-                    for (; d_tile_idx < current_block_num_elems; ++d_tile_idx) {
-                        total_acc_tile = fmaf(Krow_tile_ptr[d_tile_idx], Xf_tile_ptr[d_tile_idx], total_acc_tile);
-                        FLOP(2);
-                        // BYTES_READ(sizeof(float) * 2); // 1 from Krow_tile_ptr, 1 from Xf_tile_ptr
-                    }
-
-                    final_acc += total_acc_tile; //final result
-                    FLOP(1); 
-                }
-                outb[ oc*I + i_out ] = final_acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-    
-    // Clean up kernel memory
-    free(K);
-}
-
-// Duplicate of v4 for trying things
-void optimized_linear_v5(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        K = (float *)__builtin_assume_aligned(K, 64);
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        float Xf[d_flat]; // C99 VLA: watch your stack size!
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        // 2b) For each output-blade & channel, dot-product
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;   // row in K & bias
-                float *Krow = K + (size_t)r * d_flat;
-
-                float final_acc;
-                if (L->bias) {
-                    final_acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                } else {
-                    final_acc = 0.0f;
-                }
-
-                const int D_BLOCK_SIZE = 256; // Trying a tile size of 256
-
-                for (int d_block_base = 0; d_block_base < d_flat; d_block_base += D_BLOCK_SIZE) {
-                    float acc0_tile = 0.0f;
-                    float acc1_tile = 0.0f;
-                    float acc2_tile = 0.0f;
-                    float acc3_tile = 0.0f;
-
-                    int d_block_end = d_block_base + D_BLOCK_SIZE;
-                    if (d_block_end > d_flat) {
-                        d_block_end = d_flat;
-                    }
-                    
-                    int current_block_num_elems = d_block_end - d_block_base;
-                    if (current_block_num_elems <= 0) continue; 
-
-                    int d_tile_idx = 0; 
-                    
-                    float *Krow_tile_ptr = Krow + d_block_base;
-                    float *Xf_tile_ptr   = Xf   + d_block_base;
-
-                    // Using fma with accumulators like before
-                    int limit_unrolled_tile = (current_block_num_elems / 4) * 4;
-                    for (; d_tile_idx < limit_unrolled_tile; d_tile_idx += 4) {
-                        acc0_tile = fmaf(Krow_tile_ptr[d_tile_idx+0], Xf_tile_ptr[d_tile_idx+0], acc0_tile);
-                        acc1_tile = fmaf(Krow_tile_ptr[d_tile_idx+1], Xf_tile_ptr[d_tile_idx+1], acc1_tile);
-                        acc2_tile = fmaf(Krow_tile_ptr[d_tile_idx+2], Xf_tile_ptr[d_tile_idx+2], acc2_tile);
-                        acc3_tile = fmaf(Krow_tile_ptr[d_tile_idx+3], Xf_tile_ptr[d_tile_idx+3], acc3_tile);
-                        FLOP(8);
-                        // BYTES_READ(sizeof(float) * 8); // 4 from Krow_tile_ptr, 4 from Xf_tile_ptr
-                    }
-
-                    float total_acc_tile = 0.0f;
-                    if (limit_unrolled_tile > 0) { 
-                        total_acc_tile = acc0_tile + acc1_tile + acc2_tile + acc3_tile;
-                        FLOP(3); 
-                    }
-                    
-                    // Process whatevers remaining
-                    for (; d_tile_idx < current_block_num_elems; ++d_tile_idx) {
-                        total_acc_tile = fmaf(Krow_tile_ptr[d_tile_idx], Xf_tile_ptr[d_tile_idx], total_acc_tile);
-                        FLOP(2); // 1 FMA (i.e. 1 mul & 1 add)
-                    }
-
-                    final_acc += total_acc_tile;
-                    FLOP(1); 
-                }
-                outb[ oc*I + i_out ] = final_acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-    
-    // Clean up kernel memory
-    free(K);
-}
-
-// 3. =========================== Vectorized Optimizations ===========================
-// Used to sum horizontally using AVX
-static inline float horizontal_sum_m256(__m256 acc_vec) {
-    __m128 vlow  = _mm256_castps256_ps128(acc_vec);
-    __m128 vhigh = _mm256_extractf128_ps(acc_vec, 1);
-    __m128 vsum  = _mm_add_ps(vlow, vhigh);
-    vsum = _mm_hadd_ps(vsum, vsum);
-    vsum = _mm_hadd_ps(vsum, vsum);
-    return _mm_cvtss_f32(vsum);
-}
-
-// Added avx optimizations on top of v3 function
-void optimized_linear_v6_avx(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        // The following is a compiler hint. Actual alignment depends on malloc behavior from get_kernel
-        // or if _mm_malloc was used inside get_kernel.
-        K = (float *)__builtin_assume_aligned(K, 64); 
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        // For AVX, Xf should ideally be aligned. Stack VLA alignment is compiler-dependent.
-        // Using _mm_loadu_ps for Xf is safer.
-        float Xf[d_flat]; 
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        // 2b) For each output-blade & channel, dot-product
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;
-                float *Krow = K + (size_t)r * d_flat;
-                
-                float total_acc;
-                if (L->bias) {
-                    total_acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                } else {
-                    total_acc = 0.0f;
-                }
-
-                __m256 vec_acc = _mm256_setzero_ps();
-                int d = 0;
-                //Process 8 floats at a time (since 256/8 is32 bytes, 1 float is 4 bytes -> 8))
-                int limit_vec = (d_flat / 8) * 8;
-
-                for (; d < limit_vec; d += 8) {
-                    __m256 k_chunk = _mm256_load_ps(Krow + d); 
-                    __m256 x_chunk = _mm256_load_ps(Xf + d);
-                    vec_acc = _mm256_fmadd_ps(k_chunk, x_chunk, vec_acc);
-                    FLOP(16); // 8 FMAs = 8 muls + 8 adds so 16 flops total right?
-                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
-                }
-                
-                // Horzintally sum the floats (is there a more optimal way for this?)
-                float sum_scalar_avx = horizontal_sum_m256(vec_acc);
-                FLOP(7); // 7 adds
-                total_acc += sum_scalar_avx;
-                FLOP(1);
-
-                // Handle any remaining elements
-                for (; d < d_flat; ++d) {
-                    total_acc = fmaf(Krow[d], Xf[d], total_acc);
-                    FLOP(2); // 1 FMA (i.e. 2 flops => 1 mul and 1 add)
-                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
-                }
-                outb[ oc*I + i_out ] = total_acc;
-                // BYTES_WRITTEN(sizeof(float));
-            }
-        }
-    }
-    
-    // Clean up kernel memory
-    free(K);
-}
-
-// Tried using accumulators but across vectors to break dependencies there
-void optimized_linear_v7_avx_k_accum(
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    // x[b*(C_in*I) + c*I + i]
-    int                    B,
-    float                * __restrict out)  // out[b*(C_out*I) + c*I + i]
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      // input‐features per sample
-    const int n_flat = C_out * I;     // output‐features per sample
-
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // 1) Build the Clifford-kernel fresh every time
-        int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        K = (float *)__builtin_assume_aligned(K, 64); 
-
-    // 2) Process each sample on a single core
-    for (int b = 0; b < B; ++b) {
-        // 2a) Flatten x[b] into a contiguous Xf[]
-        float Xf[d_flat]; 
-        const float *xb = x + b * (C_in * I);
-        for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
-            for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
-            }
-        }
-
-        // 2b) For each output-blade & channel, dot-product
-        float *outb = out + b * (C_out * I);
-        for (int i_out = 0; i_out < I; ++i_out) {
-            for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;
-                float *Krow = K + (size_t)r * d_flat;
-                
-                float total_acc;
-                if (L->bias) {
-                    total_acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                } else {
-                    total_acc = 0.0f;
-                }
-
-                // Try vector accumulators
-                __m256 vec_acc0 = _mm256_setzero_ps();
-                __m256 vec_acc1 = _mm256_setzero_ps();
-
-                int d = 0;
-                
-                // Process 16 at a time (since 2 * 8 floats )
-                int limit_vec_unrolled = (d_flat / 16) * 16; 
-
-                for (; d < limit_vec_unrolled; d += 16) {
-                    __m256 k_chunk0 = _mm256_load_ps(Krow + d); 
-                    __m256 x_chunk0 = _mm256_load_ps(Xf + d);
-                    vec_acc0 = _mm256_fmadd_ps(k_chunk0, x_chunk0, vec_acc0);
-                    FLOP(16);
-                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
-
-                    __m256 k_chunk1 = _mm256_load_ps(Krow + d + 8); 
-                    __m256 x_chunk1 = _mm256_load_ps(Xf + d + 8);
-                    vec_acc1 = _mm256_fmadd_ps(k_chunk1, x_chunk1, vec_acc1);
-                    FLOP(16);
-                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
-                }
-                
-                // Handle remaining AVX vector if d_flat was not a multiple of 16 but >= 8
-                if (d < (d_flat / 8) * 8) { // Check if there's at least one more full AVX vector
-                     __m256 k_chunk = _mm256_load_ps(Krow + d); 
-                     __m256 x_chunk = _mm256_load_ps(Xf + d);
-                     vec_acc0 = _mm256_fmadd_ps(k_chunk, x_chunk, vec_acc0); // Add to vec_acc0
-                     FLOP(16);
-                     // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
-                     d += 8;
-                }
-
-                float sum_scalar_avx = 0.0f;
-                //check avx was used
-                if (limit_vec_unrolled > 0 || d > (d_flat / 16) * 16) {
-                    vec_acc0 = _mm256_add_ps(vec_acc0, vec_acc1); // Combine the avx accumulators
+                int d = 0, lim = (int)d_flat - 3;
+                for (; d < lim; d += 4) {
+                    acc +=
+                      Krow[d  ] * Xf[d  ]
+                    + Krow[d+1] * Xf[d+1]
+                    + Krow[d+2] * Xf[d+2]
+                    + Krow[d+3] * Xf[d+3];
                     FLOP(8);
-                    sum_scalar_avx = horizontal_sum_m256(vec_acc0);
-                    FLOP(7); 
-                    
-                    total_acc += sum_scalar_avx;
-                    FLOP(1); 
                 }
-                //make sure to process whatevers remaining
-                for (; d < d_flat; ++d) {
-                    total_acc = fmaf(Krow[d], Xf[d], total_acc);
-                    FLOP(2); 
-                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
+                for (; d < (int)d_flat; ++d) {
+                    acc += Krow[d] * Xf[d]; FLOP(2);
                 }
 
-                outb[ oc*I + i_out ] = total_acc;
-                // BYTES_WRITTEN(sizeof(float));
+                outb[oc * I + i_out] = acc;
             }
         }
     }
-    
-    // Clean up kernel memory
-    free(K);
 }
 
-//Try using 4 vector accumulators instead of just 2 (doesn't lead to speed-up)
-void optimized_linear_v8_avx_more_unroll( 
-    const CliffordLinear * __restrict L,
-    const float          * __restrict x,    
-    int                    B,
-    float                * __restrict out)  
-{
-    const int I      = L->sig.n_blades;
-    const int C_in   = L->in_channels;
-    const int C_out  = L->out_channels;
-    const int d_flat = C_in * I;      
-    const int n_flat = C_out * I;     
+// --------------------------------------------------------------------
+// 3) optimized_linear_v2
+// --------------------------------------------------------------------
+void optimized_linear_v2(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
 
-    // Track bytes for input, weight, and output data
-    size_t input_bytes = B * C_in * I * sizeof(float);
-    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
-    size_t output_bytes = B * C_out * I * sizeof(float);
-
-    BYTES_READ(input_bytes + weight_bytes);
-    if (L->bias) {
-        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
-    }
-    BYTES_WRITTEN(output_bytes);
-
-    // Build the Clifford-kernel fresh every time
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
         int nb_unused;
-    float *K;
-        L->get_kernel(L->weight, L->sig.g,
-                      C_in, C_out,
-                      &nb_unused, &K);
-        K = (float *)__builtin_assume_aligned(K, 64); 
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
 
     for (int b = 0; b < B; ++b) {
-        float Xf[d_flat]; 
-        const float *xb = x + b * (C_in * I);
+        const float *xb = x + (size_t)b * d_flat;
         for (int i_in = 0; i_in < I; ++i_in) {
-            int dst = i_in * C_in;
+            size_t dst = (size_t)i_in * C_in;
             for (int ic = 0; ic < C_in; ++ic) {
-                Xf[dst + ic] = xb[ ic*I + i_in ];
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
             }
         }
 
-        float *outb = out + b * (C_out * I);
+        float *outb = out + (size_t)b * n_flat;
         for (int i_out = 0; i_out < I; ++i_out) {
             for (int oc = 0; oc < C_out; ++oc) {
-                int   r    = i_out * C_out + oc;
+                int r = i_out * C_out + oc;
+                float a0=0,a1=0,a2=0,a3=0;
+                if (L->bias) { a0 = L->bias[r]; FLOP(1); }
                 float *Krow = K + (size_t)r * d_flat;
-                
-                float total_acc;
-                if (L->bias) {
-                    total_acc = L->bias[r];
-                    FLOP(1);
-                    // BYTES_READ(sizeof(float));
-                } else {
-                    total_acc = 0.0f;
-                }
 
-                __m256 vec_acc0 = _mm256_setzero_ps();
-                __m256 vec_acc1 = _mm256_setzero_ps();
-                __m256 vec_acc2 = _mm256_setzero_ps();
-                __m256 vec_acc3 = _mm256_setzero_ps();
-                int d = 0;
-                int limit_d_total = d_flat;
-                int initial_d = d; 
-                int limit_unroll32 = (limit_d_total / 32) * 32;
-                
-                for (; d < limit_unroll32; d += 32) {
-                    vec_acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  0), _mm256_loadu_ps(Xf + d +  0), vec_acc0); FLOP(16);
-                    vec_acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  8), _mm256_loadu_ps(Xf + d +  8), vec_acc1); FLOP(16);
-                    vec_acc2 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d + 16), _mm256_loadu_ps(Xf + d + 16), vec_acc2); FLOP(16);
-                    vec_acc3 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d + 24), _mm256_loadu_ps(Xf + d + 24), vec_acc3); FLOP(16);
-                    // BYTES_READ(sizeof(float) * 64); // 32 from Krow, 32 from Xf
+                int d=0, lim = ((int)d_flat/4)*4;
+                for (; d < lim; d += 4) {
+                    a0 += Krow[d+0]*Xf[d+0];
+                    a1 += Krow[d+1]*Xf[d+1];
+                    a2 += Krow[d+2]*Xf[d+2];
+                    a3 += Krow[d+3]*Xf[d+3];
+                    FLOP(8);
                 }
-
-                // Handling the remaining vectors
-                int limit_unroll16 = (limit_d_total / 16) * 16;
-                if (d < limit_unroll16) {
-                    vec_acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  0), _mm256_loadu_ps(Xf + d +  0), vec_acc0); FLOP(16);
-                    vec_acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  8), _mm256_loadu_ps(Xf + d +  8), vec_acc1); FLOP(16);
-                    // BYTES_READ(sizeof(float) * 32); // 16 from Krow, 16 from Xf
-                    
-                    d += 16;
+                float sum = a0+a1+a2+a3; FLOP(3);
+                for (; d < (int)d_flat; ++d) {
+                    sum += Krow[d]*Xf[d]; FLOP(2);
                 }
-                // if theres 8 remaining, process that
-                int limit_unroll8 = (limit_d_total / 8) * 8;
-                if (d < limit_unroll8) {
-                    vec_acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(Krow + d +  0), _mm256_loadu_ps(Xf + d +  0), vec_acc0); FLOP(16);
-                    // BYTES_READ(sizeof(float) * 16); // 8 from Krow, 8 from Xf
-                    d += 8;
-                }
-                
-                bool avx_ran = (d > initial_d); //(make sure avx was used)
-                if (avx_ran) { 
-                    vec_acc0 = _mm256_add_ps(vec_acc0, vec_acc1); 
-                    FLOP(8); 
-                    vec_acc2 = _mm256_add_ps(vec_acc2, vec_acc3); 
-                    FLOP(8); 
-                    
-                    vec_acc0 = _mm256_add_ps(vec_acc0, vec_acc2); 
-                    FLOP(8); 
-                    float sum_scalar_avx = horizontal_sum_m256(vec_acc0); 
-                    FLOP(7); 
-                    
-                    
-                    total_acc += sum_scalar_avx; 
-                    FLOP(1); 
-                }
-
-                // Process remaining scalars
-                for (; d < limit_d_total; ++d) { 
-                    total_acc = fmaf(Krow[d], Xf[d], total_acc);
-                    FLOP(2); 
-                    // BYTES_READ(sizeof(float) * 2); // 1 from Krow, 1 from Xf
-                }
-
-                outb[ oc*I + i_out ] = total_acc;
-                // BYTES_WRITTEN(sizeof(float));
+                outb[oc * I + i_out] = sum;
             }
         }
     }
-    
-    // Clean up kernel memory
-    free(K);
 }
+
+// --------------------------------------------------------------------
+// 4) optimized_linear_v3
+// --------------------------------------------------------------------
+void optimized_linear_v3(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
+
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
+        int nb_unused;
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
+
+    for (int b = 0; b < B; ++b) {
+        const float *xb = x + (size_t)b * d_flat;
+        for (int i_in = 0; i_in < I; ++i_in) {
+            size_t dst = (size_t)i_in * C_in;
+            for (int ic = 0; ic < C_in; ++ic) {
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
+            }
+        }
+
+        float *outb = out + (size_t)b * n_flat;
+        for (int i_out = 0; i_out < I; ++i_out) {
+            for (int oc = 0; oc < C_out; ++oc) {
+                int r = i_out * C_out + oc;
+                float a0=0,a1=0,a2=0,a3=0;
+                if (L->bias) { a0 = L->bias[r]; FLOP(1); }
+                float *Krow = K + (size_t)r * d_flat;
+
+                int d=0, lim = ((int)d_flat/4)*4;
+                for (; d < lim; d += 4) {
+                    a0 = fmaf(Krow[d+0], Xf[d+0], a0);
+                    a1 = fmaf(Krow[d+1], Xf[d+1], a1);
+                    a2 = fmaf(Krow[d+2], Xf[d+2], a2);
+                    a3 = fmaf(Krow[d+3], Xf[d+3], a3);
+                    FLOP(8);
+                }
+                float sum = a0+a1+a2+a3; FLOP(3);
+                for (; d < (int)d_flat; ++d) {
+                    sum = fmaf(Krow[d], Xf[d], sum); FLOP(2);
+                }
+                outb[oc * I + i_out] = sum;
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------
+// 5) optimized_linear_v4
+// --------------------------------------------------------------------
+void optimized_linear_v4(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
+
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
+        int nb_unused;
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
+
+    for (int b = 0; b < B; ++b) {
+        const float *xb = x + (size_t)b * d_flat;
+        for (int i_in = 0; i_in < I; ++i_in) {
+            size_t dst = (size_t)i_in * C_in;
+            for (int ic = 0; ic < C_in; ++ic) {
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
+            }
+        }
+
+        float *outb = out + (size_t)b * n_flat;
+        for (int i_out = 0; i_out < I; ++i_out) {
+            for (int oc = 0; oc < C_out; ++oc) {
+                int r = i_out * C_out + oc;
+                float acc = L->bias ? L->bias[r] : 0.0f;
+                if (L->bias) FLOP(1);
+
+                float *Krow = K + (size_t)r * d_flat;
+                const int TILE = 256;
+                for (size_t base = 0; base < d_flat; base += TILE) {
+                    size_t end = base + TILE;
+                    if (end > d_flat) end = d_flat;
+                    float a0=0,a1=0,a2=0,a3=0;
+                    size_t t = base, lim = base + (((end-base)/4)*4);
+                    for (; t < lim; t += 4) {
+                        a0 = fmaf(Krow[t+0], Xf[t+0], a0);
+                        a1 = fmaf(Krow[t+1], Xf[t+1], a1);
+                        a2 = fmaf(Krow[t+2], Xf[t+2], a2);
+                        a3 = fmaf(Krow[t+3], Xf[t+3], a3);
+                        FLOP(8);
+                    }
+                    float sum = a0+a1+a2+a3; FLOP(3);
+                    for (; t < end; ++t) {
+                        sum = fmaf(Krow[t], Xf[t], sum); FLOP(2);
+                    }
+                    acc += sum; FLOP(1);
+                }
+                outb[oc * I + i_out] = acc;
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------
+// 6) optimized_linear_v5 (alias of v4 for experimentation)
+// --------------------------------------------------------------------
+void optimized_linear_v5(
+    const CliffordLinear* L,
+    const float*          x,
+    int                   B,
+    float*                out
+) {
+    optimized_linear_v4(L, x, B, out);
+}
+
+// --------------------------------------------------------------------
+// 7) optimized_linear_v6_avx
+// --------------------------------------------------------------------
+static inline float horizontal_sum_m256(__m256 v) {
+    __m128 lo = _mm256_castps256_ps128(v);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_hadd_ps(s,s);
+    s = _mm_hadd_ps(s,s);
+    return _mm_cvtss_f32(s);
+}
+void optimized_linear_v6_avx(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
+
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
+        int nb_unused;
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
+
+    for (int b = 0; b < B; ++b) {
+        const float *xb = x + (size_t)b * d_flat;
+        for (int i_in = 0; i_in < I; ++i_in) {
+            size_t dst = (size_t)i_in * C_in;
+            for (int ic = 0; ic < C_in; ++ic) {
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
+            }
+        }
+
+        float *outb = out + (size_t)b * n_flat;
+        for (int i_out = 0; i_out < I; ++i_out) {
+            for (int oc = 0; oc < C_out; ++oc) {
+                int r = i_out * C_out + oc;
+                float acc = L->bias ? L->bias[r] : 0.0f; if (L->bias) FLOP(1);
+                float *Krow = K + (size_t)r * d_flat;
+
+                __m256 vec = _mm256_setzero_ps();
+                int d = 0, lim = ((int)d_flat/8)*8;
+                for (; d < lim; d += 8) {
+                    __m256 kv = _mm256_loadu_ps(Krow + d);
+                    __m256 xv = _mm256_loadu_ps(Xf   + d);
+                    vec = _mm256_fmadd_ps(kv, xv, vec); FLOP(16);
+                }
+                float sum = horizontal_sum_m256(vec); FLOP(7);
+                acc += sum; FLOP(1);
+                for (; d < (int)d_flat; ++d) {
+                    acc = fmaf(Krow[d], Xf[d], acc); FLOP(2);
+                }
+                outb[oc * I + i_out] = acc;
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------
+// 8) optimized_linear_v7_avx_k_accum
+// --------------------------------------------------------------------
+void optimized_linear_v7_avx_k_accum(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
+
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
+        int nb_unused;
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
+
+    for (int b = 0; b < B; ++b) {
+        const float *xb = x + (size_t)b * d_flat;
+        for (int i_in = 0; i_in < I; ++i_in) {
+            size_t dst = (size_t)i_in * C_in;
+            for (int ic = 0; ic < C_in; ++ic) {
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
+            }
+        }
+
+        float *outb = out + (size_t)b * n_flat;
+        for (int i_out = 0; i_out < I; ++i_out) {
+            for (int oc = 0; oc < C_out; ++oc) {
+                int r = i_out * C_out + oc;
+                float acc = L->bias ? L->bias[r] : 0.0f; if (L->bias) FLOP(1);
+                float *Krow = K + (size_t)r * d_flat;
+
+                __m256 va = _mm256_setzero_ps();
+                __m256 vb = _mm256_setzero_ps();
+                int d=0, lim16=((int)d_flat/16)*16;
+                for (; d < lim16; d += 16) {
+                    __m256 k0=_mm256_loadu_ps(Krow+d+ 0), x0=_mm256_loadu_ps(Xf+d+ 0);
+                    va=_mm256_fmadd_ps(k0,x0,va); FLOP(16);
+                    __m256 k1=_mm256_loadu_ps(Krow+d+ 8), x1=_mm256_loadu_ps(Xf+d+ 8);
+                    vb=_mm256_fmadd_ps(k1,x1,vb); FLOP(16);
+                }
+                if (d < ((int)d_flat/8)*8) {
+                    __m256 k0=_mm256_loadu_ps(Krow+d), x0=_mm256_loadu_ps(Xf+d);
+                    va=_mm256_fmadd_ps(k0,x0,va); FLOP(16);
+                    d+=8;
+                }
+                __m256 vs=_mm256_add_ps(va,vb); FLOP(8);
+                float sum = horizontal_sum_m256(vs); FLOP(7);
+                acc += sum; FLOP(1);
+                for (; d < (int)d_flat; ++d) {
+                    acc = fmaf(Krow[d], Xf[d], acc); FLOP(2);
+                }
+                outb[oc * I + i_out] = acc;
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------
+// 9) optimized_linear_v8_avx_more_unroll
+// --------------------------------------------------------------------
+void optimized_linear_v8_avx_more_unroll(
+    const CliffordLinear* __restrict L,
+    const float*          __restrict x,
+    int                           B,
+    float*                __restrict out
+) {
+    const int I     = L->sig.n_blades;
+    const int C_in  = L->in_channels;
+    const int C_out = L->out_channels;
+    const size_t d_flat = (size_t)C_in * I;
+    const size_t n_flat = (size_t)C_out * I;
+
+    static float *K = NULL;
+    static int     last_sz = 0;
+    int needed = d_flat * n_flat;
+    if (last_sz != needed) {
+        free(K);
+        int nb_unused;
+        L->get_kernel(L->weight, L->sig.g, C_in, C_out, &nb_unused, &K);
+        K = (float*)__builtin_assume_aligned(K, 64);
+        last_sz = needed;
+    }
+
+    float *Xf = ensure_scratch(d_flat);
+
+    for (int b = 0; b < B; ++b) {
+        const float *xb = x + (size_t)b * d_flat;
+        for (int i_in = 0; i_in < I; ++i_in) {
+            size_t dst = (size_t)i_in * C_in;
+            for (int ic = 0; ic < C_in; ++ic) {
+                Xf[dst + ic] = xb[(size_t)ic * I + i_in];
+            }
+        }
+
+        float *outb = out + (size_t)b * n_flat;
+        for (int i_out = 0; i_out < I; ++i_out) {
+            for (int oc = 0; oc < C_out; ++oc) {
+                int r = i_out * C_out + oc;
+                float acc = L->bias ? L->bias[r] : 0.0f; if (L->bias) FLOP(1);
+                float *Krow = K + (size_t)r * d_flat;
+
+                __m256 a0=_mm256_setzero_ps(), a1=_mm256_setzero_ps();
+                __m256 a2=_mm256_setzero_ps(), a3=_mm256_setzero_ps();
+                int d=0, lim32=((int)d_flat/32)*32;
+                for (; d < lim32; d += 32) {
+                    a0=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+ 0),
+                                      _mm256_loadu_ps(Xf  +d+ 0),a0); FLOP(16);
+                    a1=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+ 8),
+                                      _mm256_loadu_ps(Xf  +d+ 8),a1); FLOP(16);
+                    a2=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+16),
+                                      _mm256_loadu_ps(Xf  +d+16),a2); FLOP(16);
+                    a3=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+24),
+                                      _mm256_loadu_ps(Xf  +d+24),a3); FLOP(16);
+                }
+                int lim16=((int)d_flat/16)*16;
+                if (d < lim16) {
+                    a0=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+ 0),
+                                      _mm256_loadu_ps(Xf  +d+ 0),a0); FLOP(16);
+                    a1=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d+ 8),
+                                      _mm256_loadu_ps(Xf  +d+ 8),a1); FLOP(16);
+                    d+=16;
+                }
+                int lim8=((int)d_flat/8)*8;
+                if (d < lim8) {
+                    a0=_mm256_fmadd_ps(_mm256_loadu_ps(Krow+d),
+                                      _mm256_loadu_ps(Xf  +d),a0); FLOP(16);
+                    d+=8;
+                }
+                __m256 vs = _mm256_add_ps(_mm256_add_ps(a0,a1), _mm256_add_ps(a2,a3)); FLOP(24);
+                float sum = horizontal_sum_m256(vs); FLOP(7);
+                acc += sum; FLOP(1);
+                for (; d < (int)d_flat; ++d) {
+                    acc = fmaf(Krow[d], Xf[d], acc); FLOP(2);
+                }
+                outb[oc * I + i_out] = acc;
+            }
+        }
+    }
+}
+
 
 // 4. =========================== Advanced Optimizations ===========================
 
@@ -2347,7 +1993,7 @@ void register_linear_functions() {
     add_linear_function(baseline_linear, "baseline_linear");
     
     // 2. Basic Scalar Optimizations
-    add_linear_function(optimized_linear_basic, "optimized_v1_kernel_caching"); //kernel caching
+    add_linear_function(optimized_linear_v1, "optimized_v1_kernel_caching"); //kernel caching
     add_linear_function(optimized_linear_v2, "optimized_v2_k_accum");
     add_linear_function(optimized_linear_v3, "optimized_v3_fma_k_accum");
     add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
