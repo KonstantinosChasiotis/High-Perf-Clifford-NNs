@@ -260,6 +260,8 @@ Plotting scripts expect:
 - [X] Create a benhcmarking file that measures the cycles of a function (using calibration for accurate measurements).
 - [X] Utilise for better results the `tsc_x86.h` file provided by the course.
 - [X] Create a functionality that allows for functions to be registered, and when run, their cycles being measured (CodeExpert style of functionality).
+- [X] Measure relative speedup of each registerd function in comparison to the baseline.
+- [X] Add functionality that checks the new optimizations return the correct results as the tested baseline: return an `[OK]` for correct outputs or `[ERROR]` otherwise. 
 - [X] Integrate the above into a pipeline that can be executed via a single bash script for ease: allocate required memory, measure cycles of registered functions, return.
 - [X] Add functionality for plotting performance plots via the same bash script: compile and record cycles for the same registered functions over multiple inputs and call a python file from the bash script to graph. 
 - [X] Create the relevant infrastracture and bash scripts for all three layers. 
