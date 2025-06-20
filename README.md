@@ -230,11 +230,11 @@ Plotting scripts expect:
 
 ---
 
-### Layer – Geometric Clifford algebra nonlinearities (Mikke)
+### Layer – Geometric Clifford algebra nonlinearities (Mikke, Kons)
 - [X] Fails at certain test – so review the code (MIKKE)  
 - [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
 - [ ] Use loop unrolling and accumulators  
-- [ ] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512)  
+- [X] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512) (KONS)
 - [ ] Using k-accumulators for the convolution instead of `sum +=` which causes read dependencies  
 - [ ] Try using blocking in case it improves cache-locality depending on channel/batch size  
 - [ ] Using vectorization will certainly help  
