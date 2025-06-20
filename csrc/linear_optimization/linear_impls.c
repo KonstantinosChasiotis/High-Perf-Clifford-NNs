@@ -50,6 +50,17 @@ void optimized_linear_v1(
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     static float *K = NULL;
     static int     last_sz = 0;
     int needed = d_flat * n_flat;
@@ -114,6 +125,17 @@ void optimized_linear_v2(
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     static float *K = NULL;
     static int     last_sz = 0;
     int needed = d_flat * n_flat;
@@ -177,6 +199,17 @@ void optimized_linear_v3(
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     static float *K = NULL;
     static int     last_sz = 0;
     int needed = d_flat * n_flat;
@@ -239,6 +272,17 @@ void optimized_linear_v4(
     const int C_out = L->out_channels;
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     static float *K = NULL;
     static int     last_sz = 0;
@@ -330,6 +374,17 @@ void optimized_linear_v6_avx(
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     static float *K = NULL;
     static int     last_sz = 0;
     int needed = d_flat * n_flat;
@@ -391,6 +446,17 @@ void optimized_linear_v7_avx_k_accum(
     const int C_out = L->out_channels;
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     static float *K = NULL;
     static int     last_sz = 0;
@@ -461,6 +527,17 @@ void optimized_linear_v8_avx_more_unroll(
     const int C_out = L->out_channels;
     const size_t d_flat = (size_t)C_in * I;
     const size_t n_flat = (size_t)C_out * I;
+
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * C_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * C_out * C_in * sizeof(float);
+    size_t output_bytes = B * C_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * C_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
 
     static float *K = NULL;
     static int     last_sz = 0;
@@ -2006,18 +2083,18 @@ void register_linear_functions() {
 
     // 4. Advanced optimizations (dimension specific, no kernel construction)
     // 1D specific kernel
-    add_linear_function(optimized_linear_1d_kernel, "optimized_linear_1d_kernel");
-    add_linear_function(optimized_linear_1d_kernel_reordered_weights, "optimized_linear_1d_kernel_reordered_weights");
-    add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum");
-    add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma");
-    add_linear_function(optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma");
+    // add_linear_function(optimized_linear_1d_kernel, "optimized_linear_1d_kernel");
+    // add_linear_function(optimized_linear_1d_kernel_reordered_weights, "optimized_linear_1d_kernel_reordered_weights");
+    // add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum");
+    // add_linear_function(optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_weights_factored_g_accum_fma");
+    // add_linear_function(optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma");
 
-    // 3D specific kernel
-    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma");
-    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum");
-    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner");
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse");
-    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse");
-    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g");
-    add_linear_function(optimized_linear_3d_kernel_flattened_input, "optimized_linear_3d_kernel_flattened_input");
+    // // 3D specific kernel
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner");
+    // // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g");
+    // add_linear_function(optimized_linear_3d_kernel_flattened_input, "optimized_linear_3d_kernel_flattened_input");
 }
