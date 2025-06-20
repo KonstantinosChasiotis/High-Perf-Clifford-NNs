@@ -2069,17 +2069,17 @@ void register_linear_functions() {
     // 1. Baseline
     add_linear_function(baseline_linear, "baseline_linear");
     
-    // 2. Basic Scalar Optimizations
-    add_linear_function(optimized_linear_v1, "optimized_v1_kernel_caching"); //kernel caching
-    add_linear_function(optimized_linear_v2, "optimized_v2_k_accum");
-    add_linear_function(optimized_linear_v3, "optimized_v3_fma_k_accum");
-    add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
-    // add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak"); //Best scalar performance
+    // // 2. Basic Scalar Optimizations
+    // add_linear_function(optimized_linear_v1, "optimized_v1_kernel_caching"); //kernel caching
+    // add_linear_function(optimized_linear_v2, "optimized_v2_k_accum");
+    // add_linear_function(optimized_linear_v3, "optimized_v3_fma_k_accum");
+    // // add_linear_function(optimized_linear_v4, "optimized_v4_tiled_fma_k_accum");
+    // // add_linear_function(optimized_linear_v5, "optimized_v5_scalar_peak"); //Best scalar performance
     
-    // 3. Vectorized versions
-    add_linear_function(optimized_linear_v6_avx, "optimized_v6_avx");
-    add_linear_function(optimized_linear_v7_avx_k_accum, "optimized_v7_avx_k_accum"); //Using vector k accumulators
-    add_linear_function(optimized_linear_v8_avx_more_unroll, "optimized_v8_avx_more_unroll"); //Use further vector k accumulators
+    // // 3. Vectorized versions
+    // add_linear_function(optimized_linear_v6_avx, "optimized_v6_avx");
+    // add_linear_function(optimized_linear_v7_avx_k_accum, "optimized_v7_avx_k_accum"); //Using vector k accumulators
+    // add_linear_function(optimized_linear_v8_avx_more_unroll, "optimized_v8_avx_more_unroll"); //Use further vector k accumulators
 
     // 4. Advanced optimizations (dimension specific, no kernel construction)
     // 1D specific kernel
@@ -2090,11 +2090,11 @@ void register_linear_functions() {
     // add_linear_function(optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma, "optimized_linear_1d_kernel_reordered_source_weights_factored_g_accum_fma");
 
     // // 3D specific kernel
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma");
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma, "no_kernel_v1");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum, "no_kernel_v2");
     // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner");
-    // // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse");
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse");
-    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g");
+    // add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse, "optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_blade_inner_inverse");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse, "no_kernel_v3");
+    add_linear_function(optimized_linear_3d_kernel_reordered_weights_factored_g_accum_fma_k_accum_inverse_unrolled_g, "no_kernel_v4");
     // add_linear_function(optimized_linear_3d_kernel_flattened_input, "optimized_linear_3d_kernel_flattened_input");
 }
