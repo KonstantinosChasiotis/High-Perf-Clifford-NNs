@@ -81,8 +81,8 @@ static void  baseline_groupnorm(
         BYTES_READ(C * _I * _I * sizeof(float));     // running_cov_orig
     }
     if (scaling) {
-        BYTES_READ(C * _I * _I * sizeof(float));     // weight_orig
-        BYTES_READ(C * _I * _I * sizeof(float));     // bias_orig
+        BYTES_READ((C / num_groups) * _I * _I * sizeof(float));     // weight_orig
+        BYTES_READ((C / num_groups) * _I * _I * sizeof(float));     // bias_orig
     }
     
     // Track bytes written to output
@@ -1319,8 +1319,8 @@ static void optimized_groupnorm_v3(
         BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
     }
     if (scaling) {
-        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
-        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // weight_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // bias_orig
     }
     
     // Track bytes written to output
@@ -4471,8 +4471,8 @@ static void optimized_groupnorm_v12(
         BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
     }
     if (scaling) {
-        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
-        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // weight_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // bias_orig
     }
     
     // Track bytes written to output
@@ -7987,8 +7987,8 @@ static void optimized_groupnorm_v20(
         BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
     }
     if (scaling) {
-        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
-        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // weight_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // bias_orig
     }
     
     // Track bytes written to output
@@ -10425,8 +10425,8 @@ static void optimized_groupnorm_v26(
         BYTES_READ(C * I * I * sizeof(float));       // running_cov_orig
     }
     if (scaling) {
-        BYTES_READ(C * I * I * sizeof(float));       // weight_orig
-        BYTES_READ(C * I * I * sizeof(float));       // bias_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // weight_orig
+        BYTES_READ((C / num_groups) * I * I * sizeof(float));       // bias_orig
     }
     
     // Track bytes written to output
