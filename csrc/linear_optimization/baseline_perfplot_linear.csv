@@ -1,5 +1,5 @@
 
-baseline_linear
+Baseline
 batch,cycles,flops,bytes_read,bytes_written
 16,144888.11,132096,8448,4096
 32,294635.18,264192,12544,8192
@@ -15,7 +15,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,290546594.15,270532608,8392960,8388608
 65536,600382536.63,541065216,16781568,16777216
 
-optimized_v1_kernel_caching
+Kernel Caching
 batch,cycles,flops,bytes_read,bytes_written
 16,62823.83,132096,8448,4096
 32,119661.74,264192,12544,8192
@@ -31,7 +31,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,113257551.75,270532608,8392960,8388608
 65536,225674171.67,541065216,16781568,16777216
 
-optimized_v2_k_accum
+K Accum
 batch,cycles,flops,bytes_read,bytes_written
 16,102139.08,135168,8448,4096
 32,211554.47,270336,12544,8192
@@ -47,7 +47,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,198312728.07,276824064,8392960,8388608
 65536,395921523.12,553648128,16781568,16777216
 
-optimized_v3_fma_k_accum
+FMA-K-Accum
 batch,cycles,flops,bytes_read,bytes_written
 16,80615.89,135168,8448,4096
 32,164036.28,270336,12544,8192
@@ -63,7 +63,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,154622831.55,276824064,8392960,8388608
 65536,307869641.30,553648128,16781568,16777216
 
-optimized_v4_tiled_fma_k_accum
+Tiled-FMA-K-Accum
 batch,cycles,flops,bytes_read,bytes_written
 16,83574.83,136192,8448,4096
 32,169471.27,272384,12544,8192
@@ -79,7 +79,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,161283158.64,278921216,8392960,8388608
 65536,321651056.81,557842432,16781568,16777216
 
-optimized_v6_avx
+AVX
 batch,cycles,flops,bytes_read,bytes_written
 16,25729.03,140288,8448,4096
 32,51583.96,280576,12544,8192
@@ -95,7 +95,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,56857747.83,287309824,8392960,8388608
 65536,105424150.80,574619648,16781568,16777216
 
-optimized_v7_avx_k_accum
+AVX-K-Accum
 batch,cycles,flops,bytes_read,bytes_written
 16,21174.57,148480,8448,4096
 32,43374.96,296960,12544,8192
@@ -111,7 +111,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,44342268.97,304087040,8392960,8388608
 65536,81632660.49,608174080,16781568,16777216
 
-optimized_v8_avx_more_unroll
+AVX-More-Unroll
 batch,cycles,flops,bytes_read,bytes_written
 16,21162.69,164864,8448,4096
 32,43230.56,329728,12544,8192
