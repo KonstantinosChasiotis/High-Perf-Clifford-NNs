@@ -343,6 +343,17 @@ void clifford_linear_forward(
     int nb; 
     float *K;
 
+    // Track bytes for input, weight, and output data
+    size_t input_bytes = B * c_in * I * sizeof(float);
+    size_t weight_bytes = L->sig.n_blades * c_out * c_in * sizeof(float);
+    size_t output_bytes = B * c_out * I * sizeof(float);
+
+    BYTES_READ(input_bytes + weight_bytes);
+    if (L->bias) {
+        BYTES_READ(L->sig.n_blades * c_out * sizeof(float));
+    }
+    BYTES_WRITTEN(output_bytes);
+
     // Flatten x
     float *x_f = malloc(sizeof(float) * B * d_flat);
     for (int b = 0; b < B; b++)
