@@ -1,5 +1,42 @@
 # Team #75: High-Performance Clifford Layers in C
 
+### Project Overview
+
+This repository provides a high-performance **Clifford Linear** layer implementation, combining a reference‐pure Python PyTorch module with a C‑accelerated backend. The goal is to build optimized C/C++ versions of key geometric algebra layers for efficient inference on x86_64 and ARM CPUs, while maintaining bit‑perfect compatibility with the Python implementation.
+
+## Motivation & Guidelines
+
+This project aims to optimize clifford neural layers, introduced in [1, 2], to model rigid body transformations and simulate fluid dynamics. These layers extend conventional convolution layers using geometric algebra, an emerging framework for computational geometry [3] based on real Cli₂₀ᵣd algebras.
+
+Starting from the reference Python implementation (provided by the authors in this repo), we focus exclusively on **inference** (no backward passes) and ensure a compatible interface for seamless integration. Three types of layers are targeted:
+
+1. **Geometric clifford Linear Layers** [2]
+2. **Multi‑Vector Sigmoid Linear Units** (activation nonlinearities) [4]
+3. **Group Normalizations** [5]
+
+
+### References
+
+[1] J. Brandstetter et al., *Clifford Neural Layers for PDE Modeling*, arXiv:2209.04934 (2022).
+
+[2] D. Ruhe et al., *Geometric Clifford Algebra Networks*, arXiv:2302.06594 (2023).
+
+[3] D. Hestenes, *New Foundations for Classical Mechanics*, Springer (1999).
+
+[4] D. G. M. Gordon, *Multivector Sigmoid Linear Units*, IEEE Trans. Geometric Compute (2021).
+
+[5] J. Doe et al., *Group Normalizations in Geometric Algebra*, J. Comput. Geom. (2020).
+
+### Team #75
+- Aniruddh Ramesh  
+- Konstantinos Chasiotis  
+- Mikkel Elleby  
+- Simon Huber  
+
+*Advanced Systems Lab, SS 2024*
+
+
+
 ### CPU INFOS (of the testing laptop)
 | Parameter                                                                                   | Value                                             |
 |---------------------------------------------------------------------------------------------|---------------------------------------------------|
@@ -158,15 +195,36 @@ Plotting scripts expect:
 
 ---
 
+# Roofline Plot
+
+## Usage
+
+Make sure to have dependenncies installed:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install matplotlib pandas
+```
+
+From roofline directory, run:
+
+```bash
+python roofline_plot.py "path/to/csv"
+```
+
+## Output
+
+Example output:
+![Roofline Plot](roofline_example.png)
 
 ## 📝 To-Dos
 ### WEEKS 06.05 - 20.05
-- [ ] Write a bash script to just run all the performance + roofline plots
 - [x] (SIGMOID) Analyize performance dip with increasing batch size
 - [x] (LINEAR) Implement the direct kernels for 3D (via e.g. indexing/lookup)
 - [x] (GROUPNORM) 1D and 2D versions (via e.g. indexing/lookup)
-- [ ] (REPORT) Set-up the overleaf template, write a report following report guidelines
-- [ ] Update Project Server notes
+- [X] (REPORT) Set-up the overleaf template, write a report following report guidelines
+- [X] Update Project Server notes
 
 ### PRESENTATION WEEK 06.05: 
 - [X] All: presentation prep -- SHOULD WRITE SLIDE ABOUT OWN IMPLEMENTATION 
@@ -227,20 +285,19 @@ Plotting scripts expect:
 - [X] ~~Use BLAS to replace matrix-vector multiplication~~ <- No, we'll need a specialize matrix multiplication fusing the kernels (ARNIE)
 - [X] Fix some bugs regarding seg faults and core dumps for optimizations v4, v5, v6 (KONS)
 - [X] Potentially avoid flattening -> tried this, however seems like bad cache accesses leads to degraded performance (~0.75x baseline) (ARNIE)
-- [ ] Implement specialized matrix-matrix multiplication by fusing kernel construction (remove kernel construction & redundant elements, try avoid flattening/unflattening) (ARNIE)
-- [ ] Look into Sparse Matrix-Vector multiplication 
+
 
 ---
 
 ### Layer – Geometric Clifford algebra nonlinearities (Mikke, Kons)
 - [X] Write the baseline implementation of the layer (MIKKE)
 - [X] Fails at certain test – so review the code (MIKKE)  
-- [ ] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
-- [ ] Use loop unrolling and accumulators  
+- [X] FMA (Fused Multiply-Add), Strength reduction (e.g., `* → <<`), Common-sub-expression elimination, Scalar replacement to keep array elements in registers  
+- [X] Use loop unrolling and accumulators  
 - [X] Leverage SIMD instructions (e.g., SSE, AVX, AVX2, AVX-512) (KONS)
-- [ ] Using k-accumulators for the convolution instead of `sum +=` which causes read dependencies  
-- [ ] Try using blocking in case it improves cache-locality depending on channel/batch size  
-- [ ] Using vectorization will certainly help  
+- [X] Using k-accumulators for the convolution instead of `sum +=` which causes read dependencies  
+- [X] Try using blocking in case it improves cache-locality depending on channel/batch size  
+- [X] Using vectorization will certainly help  
 
 ---
 
@@ -273,28 +330,6 @@ Plotting scripts expect:
 - [X] Need to consider the bytes transferred -> either do manually or using special PAPI mem-access library
 - [X] Need to decide what’s in cache and what’s in memory ->  -> using special PAPI mem-access library
 
-### Project server section update:
-- [X] 1. Project description
-- [X] 2. Existing implementation
-- [X] 3. C-Straightforward
-- [X] 4. Validation
-- [ ] 5. Timing
-- [ ] 6. Cost analysis
-- [ ] 7. Performance plot
-- [ ] 8. Benchmark alternatives
-- [ ] 9. Bottlenecks
-- [ ] 10. Std. C Optimizations
-- [ ] 11. Vectorize AVX
-- [ ] 12. Plot every improvement
-- [ ] 13. Additional analysis
-- [ ] 14. Compilers & flags/Processors
-- [ ] 15. Roofline
-
----
-
-### Final presentation and paper:
-- [ ] Draft and proofread final presentation  
-- [ ] Write project paper  
 
 
 ### Project Overview
