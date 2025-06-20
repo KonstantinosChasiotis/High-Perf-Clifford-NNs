@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const bool  running  = true;
+    const bool  running  = false;
     const bool  scaling  = true;
     const bool  training = true;
     const float momentum = 0.1f;
