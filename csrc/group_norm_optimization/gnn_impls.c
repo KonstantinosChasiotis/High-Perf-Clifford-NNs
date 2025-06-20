@@ -10534,60 +10534,43 @@ static void optimized_groupnorm_v26(
         }
         int n = I;
         float *a = &gn_X_temp[i*I*I];
-        //float x, r;
-        int ii, j, k;
+        int ii, jj, k;
         // Loop over columns
-        for(j = 0; j < n; j++) {
+        for(jj = 0; jj < n; jj++) {
             // i = j
-            //x = a[j*n+j];  //A_jj 
-            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            __m256 x = _mm256_loadu_ps(&a[8*(jj*n+jj)]); //A_jj 
             
-            for(k = 0; k < j; k++){
-                //FLOP(2);
-                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
-                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+            for(k = 0; k < jj; k++){
+                __m256 temp = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                 FLOP(8);
                 temp = _mm256_mul_ps(temp, temp);
                 FLOP(8);
-                x = _mm256_sub_ps(x, temp);
+                x = _mm256_sub_ps(x, temp); // L_jk L_jk
             }
 
-            //if(x < 0)
-            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
-
-            //FLOP(30);
-            //x = sqrt(x);
             FLOP(8*30);
             x = _mm256_sqrt_ps(x);
 
-            //a[j*n+j] = x;  // L_jj
-            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+            _mm256_storeu_ps(&a[8*(jj*n+jj)], x); // L_jj
 
-            //FLOP(1);
-            //r = 1.0 / x;
             FLOP(8);
             __m256 r = _mm256_div_ps(one, x);
             
-
             // i != j 
-            for(ii = j+1; ii < n; ii++) {
-                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+            for(ii = jj+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+jj)]);  // A_ij 
 
-                for(k = 0; k < j; k++){
-                    //FLOP(2);
-                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                for(k = 0; k < jj; k++){
                     __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
-                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                     FLOP(8);
-                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    temp0 = _mm256_mul_ps(temp0, temp1); // L_ik L_ij 
                     FLOP(8);
                     x1 = _mm256_sub_ps(x1, temp0);
                 }
-                //FLOP(1);
-                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
                 FLOP(8);
-                __m256 tostore = _mm256_mul_ps(x1, r);
-                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+                __m256 tostore = _mm256_mul_ps(x1, r); // L_ij = x / L_jj 
+                _mm256_storeu_ps(&a[8*(ii*n+jj)], tostore);
             }
         }
         for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
@@ -10613,7 +10596,6 @@ static void optimized_groupnorm_v26(
             float *mat = gn_cov_temp + (i*I*I);
             float *vec = gn_X_temp; //32xI vector
             for(int r = I-1; r >= 0; r--){//from last row to first
-                //float rowsum = 0.0f;
                 __m256 rowsum0 = _mm256_setzero_ps();
                 __m256 rowsum1 = _mm256_setzero_ps();
                 __m256 rowsum2 = _mm256_setzero_ps();
@@ -10670,8 +10652,7 @@ static void optimized_groupnorm_v26(
     
     //SCALING
     if ( scaling ){
-
-        //just a transpose
+        //just a transpose (no replication)
         for(int i = 0; i < I; i++){
             for(int ii = 0; ii < I; ii++){
                 for(int j = 0; j < group_size; j++){
@@ -10688,8 +10669,7 @@ static void optimized_groupnorm_v26(
             }
         }
         
-
-        //mat mult and add
+        //mat mult and add bias
         for(int i = 0; i < dim0; i++){
             for(int j = 0; j < num_groups; j++){
                 for(int l = 0; l < D; l++){
@@ -10928,7 +10908,6 @@ static void optimized_groupnorm_v27(
 
 
     //CHOLESKY
-
     __m256 one = _mm256_set1_ps(1.0f);
     for(int i = 0; i < dim0; i+=8){
         for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
@@ -10938,60 +10917,43 @@ static void optimized_groupnorm_v27(
         }
         int n = I;
         float *a = &gn_X_temp[i*I*I];
-        //float x, r;
-        int ii, j, k;
+        int ii, jj, k;
         // Loop over columns
-        for(j = 0; j < n; j++) {
+        for(jj = 0; jj < n; jj++) {
             // i = j
-            //x = a[j*n+j];  //A_jj 
-            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            __m256 x = _mm256_loadu_ps(&a[8*(jj*n+jj)]); //A_jj 
             
-            for(k = 0; k < j; k++){
-                //FLOP(2);
-                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
-                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+            for(k = 0; k < jj; k++){
+                __m256 temp = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                 FLOP(8);
                 temp = _mm256_mul_ps(temp, temp);
                 FLOP(8);
-                x = _mm256_sub_ps(x, temp);
+                x = _mm256_sub_ps(x, temp); // L_jk L_jk
             }
 
-            //if(x < 0)
-            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
-
-            //FLOP(30);
-            //x = sqrt(x);
             FLOP(8*30);
             x = _mm256_sqrt_ps(x);
 
-            //a[j*n+j] = x;  // L_jj
-            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+            _mm256_storeu_ps(&a[8*(jj*n+jj)], x); // L_jj
 
-            //FLOP(1);
-            //r = 1.0 / x;
             FLOP(8);
             __m256 r = _mm256_div_ps(one, x);
             
-
             // i != j 
-            for(ii = j+1; ii < n; ii++) {
-                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+            for(ii = jj+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+jj)]);  // A_ij 
 
-                for(k = 0; k < j; k++){
-                    //FLOP(2);
-                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                for(k = 0; k < jj; k++){
                     __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
-                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                     FLOP(8);
-                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    temp0 = _mm256_mul_ps(temp0, temp1); // L_ik L_ij 
                     FLOP(8);
                     x1 = _mm256_sub_ps(x1, temp0);
                 }
-                //FLOP(1);
-                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
                 FLOP(8);
-                __m256 tostore = _mm256_mul_ps(x1, r);
-                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+                __m256 tostore = _mm256_mul_ps(x1, r); // L_ij = x / L_jj 
+                _mm256_storeu_ps(&a[8*(ii*n+jj)], tostore);
             }
         }
         for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
@@ -11017,7 +10979,6 @@ static void optimized_groupnorm_v27(
             float *mat = gn_cov_temp + (i*I*I);
             float *vec = gn_X_temp; //32xI vector
             for(int r = I-1; r >= 0; r--){//from last row to first
-                //float rowsum = 0.0f;
                 __m256 rowsum0 = _mm256_setzero_ps();
                 __m256 rowsum1 = _mm256_setzero_ps();
                 __m256 rowsum2 = _mm256_setzero_ps();
@@ -11073,8 +11034,7 @@ static void optimized_groupnorm_v27(
 
     //SCALING
     if ( scaling ){
-
-        //just a transpose
+        //just a transpose (no replications)
         for(int i = 0; i < I; i++){
             for(int ii = 0; ii < I; ii++){
                 for(int j = 0; j < group_size; j++){
@@ -11102,12 +11062,12 @@ static void optimized_groupnorm_v27(
                     float *b = gn_bias_temp + i*I;
 
                     //1) load in b as base
-                    //4 accumulators
+                    //2 accumulators
                     __m128 accum0 = _mm_loadu_ps(b);
                     __m128 accum1 = _mm_setzero_ps();
                     
                     //2) iterate W cols with fma (note we have W^T)
-                    //use each of the 4 accum to do 2 cols
+                    //use each of the 2 accum to do 2 cols
                     for(int ii = 0; ii < 2; ii++){
                         __m128 col0 = _mm_loadu_ps(&WT[(ii*2 + 0)*I]);
                         __m128 col1 = _mm_loadu_ps(&WT[(ii*2 + 1)*I]);
@@ -11274,60 +11234,43 @@ static void optimized_groupnorm_v28(
         }
         int n = I;
         float *a = &gn_X_temp[i*I*I];
-        //float x, r;
-        int ii, j, k;
+        int ii, jj, k;
         // Loop over columns
-        for(j = 0; j < n; j++) {
+        for(jj = 0; jj < n; jj++) {
             // i = j
-            //x = a[j*n+j];  //A_jj 
-            __m256 x = _mm256_loadu_ps(&a[8*(j*n+j)]);
+            __m256 x = _mm256_loadu_ps(&a[8*(jj*n+jj)]); //A_jj 
             
-            for(k = 0; k < j; k++){
-                //FLOP(2);
-                //x -= a[j*n+k] * a[j*n+k];  // L_jk L_jk 
-                __m256 temp = _mm256_loadu_ps(&a[8*(j*n+k)]);
+            for(k = 0; k < jj; k++){
+                __m256 temp = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                 FLOP(8);
                 temp = _mm256_mul_ps(temp, temp);
                 FLOP(8);
-                x = _mm256_sub_ps(x, temp);
+                x = _mm256_sub_ps(x, temp); // L_jk L_jk
             }
 
-            //if(x < 0)
-            //    printf("clofford_groupnorm: Cholesky decomposition x was negative\n");
-
-            //FLOP(30);
-            //x = sqrt(x);
             FLOP(8*30);
             x = _mm256_sqrt_ps(x);
 
-            //a[j*n+j] = x;  // L_jj
-            _mm256_storeu_ps(&a[8*(j*n+j)], x);
+            _mm256_storeu_ps(&a[8*(jj*n+jj)], x); // L_jj
 
-            //FLOP(1);
-            //r = 1.0 / x;
             FLOP(8);
             __m256 r = _mm256_div_ps(one, x);
             
-
             // i != j 
-            for(ii = j+1; ii < n; ii++) {
-                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+j)]);  // A_ij 
+            for(ii = jj+1; ii < n; ii++) {
+                __m256 x1 = _mm256_loadu_ps(&a[8*(ii*n+jj)]);  // A_ij 
 
-                for(k = 0; k < j; k++){
-                    //FLOP(2);
-                    //x -= a[i*n+k] * a[j*n+k];  // L_ik L_ij 
+                for(k = 0; k < jj; k++){
                     __m256 temp0 = _mm256_loadu_ps(&a[8*(ii*n+k)]);
-                    __m256 temp1 = _mm256_loadu_ps(&a[8*(j*n+k)]);
+                    __m256 temp1 = _mm256_loadu_ps(&a[8*(jj*n+k)]);
                     FLOP(8);
-                    temp0 = _mm256_mul_ps(temp0, temp1);
+                    temp0 = _mm256_mul_ps(temp0, temp1); // L_ik L_ij 
                     FLOP(8);
                     x1 = _mm256_sub_ps(x1, temp0);
                 }
-                //FLOP(1);
-                //a[i*n+j] = x * r;  // L_ij = x / L_jj 
                 FLOP(8);
-                __m256 tostore = _mm256_mul_ps(x1, r);
-                _mm256_storeu_ps(&a[8*(ii*n+j)], tostore);
+                __m256 tostore = _mm256_mul_ps(x1, r); // L_ij = x / L_jj 
+                _mm256_storeu_ps(&a[8*(ii*n+jj)], tostore);
             }
         }
         for(int j = 0; j < 8; j++){ //jump form cov mat to cov mat
@@ -11353,7 +11296,6 @@ static void optimized_groupnorm_v28(
             float *mat = gn_cov_temp + (i*I*I);
             float *vec = gn_X_temp; //32xI vector
             for(int r = I-1; r >= 0; r--){//from last row to first
-                //float rowsum = 0.0f;
                 __m256 rowsum0 = _mm256_setzero_ps();
                 __m256 rowsum1 = _mm256_setzero_ps();
                 __m256 rowsum2 = _mm256_setzero_ps();
@@ -11410,8 +11352,7 @@ static void optimized_groupnorm_v28(
 
     //SCALING
     if ( scaling ){
-
-        //just a transpose
+        //just a transpose (no replication)
         for(int i = 0; i < I; i++){
             for(int ii = 0; ii < I; ii++){
                 for(int j = 0; j < group_size; j++){
@@ -11427,7 +11368,6 @@ static void optimized_groupnorm_v28(
                 }
             }
         }
-        
 
         //mat mult and add
         for(int i = 0; i < dim0; i++){
