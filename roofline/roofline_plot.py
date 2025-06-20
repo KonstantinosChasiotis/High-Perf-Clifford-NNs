@@ -105,27 +105,26 @@ class RooflinePlot:
         )
 
         # Annotate peaks inside plot and pushed right
-        x_min, x_max = ax.get_xlim()
         xp = x_max * 0.8
         ax.text(xp, peak * 1.1, f'Scalar Peak (π) = {peak} FLOPS/cycle',
                 color='red', ha='right', va='bottom', fontsize=16, fontweight='bold')
         ax.text(xp, avx2 * 1.1, f'AVX2 Peak (π) = {avx2} FLOPS/cycle',
                 color='green', ha='right', va='bottom', fontsize=16, fontweight='bold')
 
-        # Centered three-line title with specified font sizes
-        fig.text(0.5, 0.98, 'Intel core i5-1035g4 @ 3.70GHz',
-                 ha='center', va='top', fontsize=17, fontweight='bold')
-        fig.text(0.5, 0.945, 'Compiler: gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0',
-                 ha='center', va='top', fontsize=17, fontweight='bold')
-        fig.text(0.5, 0.91, 'Performance (F/C) vs Operational Intensity (F/B)',
-                 ha='center', va='top', fontsize=15)
+        # Left-aligned three-line title with specified font sizes
+        fig.suptitle('Intel Core i5-1035G4 @ 3.70GHz', x=0.01, y=0.98,
+                     ha='left', va='top', fontsize=17, fontweight='bold')
+        fig.text(0.01, 0.945, 'Compiler: gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0',
+                 ha='left', va='top', fontsize=15)
+        fig.text(0.01, 0.91, 'Performance (F/C) vs Operational Intensity (F/B)',
+                 ha='left', va='top', fontsize=13)
 
         # White grid lines, thicker, both major and minor
         ax.grid(True, which='major', color='white', linestyle='-', linewidth=2)
         ax.grid(True, which='minor', color='white', linestyle='-', linewidth=1)
 
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(handles, labels, loc='lower right', prop={'size': 14, 'weight': 'bold'})
+        ax.legend(handles, labels, loc='lower right', prop={'size': 14, 'weight': 'bold'}, framealpha=0)
 
         # Tight layout
         fig.tight_layout(rect=[0, 0, 1, 0.85])

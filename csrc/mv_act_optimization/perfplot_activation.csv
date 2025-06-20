@@ -14,7 +14,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,77783557.38,11534336,16777584,16777216
 65536,158055535.14,23068672,33554800,33554432
 
-Index Inversion and Filtering Active Blades
+Index Inv
 batch,cycles,flops,bytes_read,bytes_written
 16,8962.88,4608,8560,8192
 32,18805.77,10240,16752,16384
@@ -30,7 +30,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,39704346.74,9437184,16777584,16777216
 65536,78904279.57,18874368,33554800,33554432
 
-Sigmoid Acceleration
+Sigmoid Acc
 batch,cycles,flops,bytes_read,bytes_written
 16,5508.60,9984,8560,8192
 32,11856.55,16896,16752,16384
@@ -46,7 +46,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,38459847.58,13111296,16777584,16777216
 65536,63212429.46,24121344,33554800,33554432
 
-Tiling for Sparse Locality
+Tiling
 batch,cycles,flops,bytes_read,bytes_written
 16,7129.89,10496,8560,8192
 32,13502.66,16896,16752,16384
@@ -62,7 +62,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,16058960.60,13111296,16777584,16777216
 65536,32642652.42,26218496,33554800,33554432
 
-Branchless Mask
+Branchless
 batch,cycles,flops,bytes_read,bytes_written
 16,8289.40,11776,8560,8192
 32,15819.05,19456,16752,16384
@@ -78,7 +78,7 @@ batch,cycles,flops,bytes_read,bytes_written
 32768,15144360.63,12587008,16777584,16777216
 65536,37089910.66,33558528,33554800,33554432
 
-AVX Implementation
+AVX
 batch,cycles,flops,bytes_read,bytes_written
 16,8389.15,13056,8560,8192
 32,19053.94,23552,16752,16384
