@@ -5894,8 +5894,7 @@ static void optimized_groupnorm_v15(
         __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_high);
-        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02) << 8) | 
-                                                                    ((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02));
+        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_even_odd);
         FLOP(8);
@@ -8820,8 +8819,7 @@ static void optimized_groupnorm_v22(
         __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_high);
-        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02) << 8) | 
-                                                                    ((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02));
+        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_even_odd);
         FLOP(8);
@@ -10049,8 +10047,7 @@ static void optimized_groupnorm_v25(
         __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_high);
-        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02) << 8) | 
-                                                                    ((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02));
+        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_even_odd);
         FLOP(8);
@@ -11145,8 +11142,7 @@ static void optimized_groupnorm_v28(
         __m256 accum0_high = _mm256_permute2f128_ps(accum0, accum0, 0x01);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_high);
-        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02) << 8) | 
-                                                                    ((0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02));
+        __m256 accum0_even_odd = _mm256_shuffle_ps(accum0, accum0, (0x01 << 6) | (0x00 << 4) | (0x03 << 2) | 0x02);
         FLOP(8);
         accum0 = _mm256_add_ps(accum0, accum0_even_odd);
         FLOP(8);
